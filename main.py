@@ -160,7 +160,7 @@ def main(page: ft.Page):
             colors=[ft.Colors.INDIGO_700, ft.Colors.BLUE_600]
         ),
         content=ft.Column([
-            ft.Text("INGRESO TOTAL DEL DÍA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+            ft.Text("INGRESO TOTAL DEL DÍA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             lbl_total_dia,
             lbl_conteo_dia
         ])
