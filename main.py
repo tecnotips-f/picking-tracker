@@ -193,4 +193,4 @@ def main(page: ft.Page):
     actualizar_vista_diaria()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(main)
