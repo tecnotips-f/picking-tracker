@@ -16,7 +16,7 @@ def main(page: ft.Page):
     txt_fecha = ft.TextField(
         label="Fecha (AAAA-MM-DD)",
         value=fecha_actual,
-        icon=ft.Icons.CALENDAR_TODAY,
+        icon=ft.icons.CALENDAR_TODAY,
         on_change=lambda e: actualizar_vista_diaria()
     )
     txt_sg = ft.TextField(
@@ -45,9 +45,9 @@ def main(page: ft.Page):
         on_change=lambda e: actualizar_vista_previa_monto()
     )
 
-    lbl_estimado = ft.Text("Ingreso estimado del pedido: $ 0", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
-    lbl_total_dia = ft.Text("$ 0", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-    lbl_conteo_dia = ft.Text("0 pedidos", size=14, color=ft.Colors.WHITE)
+    lbl_estimado = ft.Text("Ingreso estimado del pedido: $ 0", size=16, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_700)
+    lbl_total_dia = ft.Text("$ 0", size=26, weight=ft.FontWeight.BOLD, color=ft.colors.WHITE)
+    lbl_conteo_dia = ft.Text("0 pedidos", size=14, color=ft.colors.WHITE)
     lista_pedidos_container = ft.Column(spacing=10)
 
     def obtener_valores_numericos():
@@ -81,8 +81,8 @@ def main(page: ft.Page):
             tarjeta = ft.Container(
                 padding=12,
                 border_radius=10,
-                bgcolor=ft.Colors.GREY_100,
-                border=ft.border.all(1, ft.Colors.GREY_300),
+                bgcolor=ft.colors.GREY_100,
+                border=ft.border.all(1, ft.colors.GREY_300),
                 content=ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
@@ -91,16 +91,16 @@ def main(page: ft.Page):
                             expand=True,
                             controls=[
                                 ft.Text(f"SG: {sg}  •  {tipo.upper()}", weight=ft.FontWeight.BOLD, size=15),
-                                ft.Text(f"SKUs: {skus} | Artículos: {arts}", size=13, color=ft.Colors.GREY_700),
+                                ft.Text(f"SKUs: {skus} | Artículos: {arts}", size=13, color=ft.colors.GREY_700),
                             ]
                         ),
                         ft.Row(
                             spacing=4,
                             controls=[
-                                ft.Text(f"$ {ingreso:,.0f}".replace(",", "."), weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_700),
+                                ft.Text(f"$ {ingreso:,.0f}".replace(",", "."), weight=ft.FontWeight.BOLD, size=16, color=ft.colors.GREEN_700),
                                 ft.IconButton(
-                                    icon=ft.Icons.DELETE_OUTLINE,
-                                    icon_color=ft.Colors.RED_400,
+                                    icon=ft.icons.DELETE_OUTLINE,
+                                    icon_color=ft.colors.RED_400,
                                     tooltip="Eliminar registro",
                                     on_click=lambda e, pid=p_id: eliminar_registro(pid)
                                 )
@@ -121,19 +121,19 @@ def main(page: ft.Page):
         skus, arts = obtener_valores_numericos()
 
         if not fecha_val or not sg_val:
-            page.snack_bar = ft.SnackBar(ft.Text("Por favor ingresa la Fecha y el número de SG."), bgcolor=ft.Colors.RED_600)
+            page.snack_bar = ft.SnackBar(ft.Text("Por favor ingresa la Fecha y el número de SG."), bgcolor=ft.colors.RED_600)
             page.snack_bar.open = True
             page.update()
             return
 
         if rg_tipo.value == "Picking" and skus <= 0:
-            page.snack_bar = ft.SnackBar(ft.Text("Para Picking debes ingresar al menos 1 SKU."), bgcolor=ft.Colors.ORANGE_700)
+            page.snack_bar = ft.SnackBar(ft.Text("Para Picking debes ingresar al menos 1 SKU."), bgcolor=ft.colors.ORANGE_700)
             page.snack_bar.open = True
             page.update()
             return
 
         if rg_tipo.value == "Driver" and arts <= 0:
-            page.snack_bar = ft.SnackBar(ft.Text("Para Driver debes ingresar al menos 1 artículo."), bgcolor=ft.Colors.ORANGE_700)
+            page.snack_bar = ft.SnackBar(ft.Text("Para Driver debes ingresar al menos 1 artículo."), bgcolor=ft.colors.ORANGE_700)
             page.snack_bar.open = True
             page.update()
             return
@@ -147,7 +147,7 @@ def main(page: ft.Page):
         actualizar_vista_previa_monto()
         actualizar_vista_diaria()
 
-        page.snack_bar = ft.SnackBar(ft.Text("Pedido registrado correctamente."), bgcolor=ft.Colors.GREEN_600)
+        page.snack_bar = ft.SnackBar(ft.Text("Pedido registrado correctamente."), bgcolor=ft.colors.GREEN_600)
         page.snack_bar.open = True
         page.update()
 
@@ -155,12 +155,12 @@ def main(page: ft.Page):
         padding=18,
         border_radius=12,
         gradient=ft.LinearGradient(
-            begin=ft.alignment.top_left,
-            end=ft.alignment.bottom_right,
-            colors=[ft.Colors.INDIGO_700, ft.Colors.BLUE_600]
+            begin="top_left",
+            end="bottom_right",
+            colors=[ft.colors.INDIGO_700, ft.colors.BLUE_600]
         ),
         content=ft.Column([
-            ft.Text("INGRESO TOTAL DEL DÍA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            ft.Text("INGRESO TOTAL DEL DÍA", size=12, weight=ft.FontWeight.BOLD, color=ft.colors.WHITE),
             lbl_total_dia,
             lbl_conteo_dia
         ])
@@ -168,7 +168,7 @@ def main(page: ft.Page):
 
     page.add(
         tarjeta_resumen,
-        ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+        ft.Divider(height=10, color=ft.colors.TRANSPARENT),
         ft.Text("Registrar Nuevo Pedido", size=18, weight=ft.FontWeight.BOLD),
         txt_fecha,
         txt_sg,
@@ -178,9 +178,9 @@ def main(page: ft.Page):
         lbl_estimado,
         ft.ElevatedButton(
             text="GUARDAR PEDIDO",
-            icon=ft.Icons.ADD_CIRCLE_OUTLINE,
-            bgcolor=ft.Colors.INDIGO_600,
-            color=ft.Colors.WHITE,
+            icon=ft.icons.ADD_CIRCLE_OUTLINE,
+            bgcolor=ft.colors.INDIGO_600,
+            color=ft.colors.WHITE,
             height=48,
             width=float("inf"),
             on_click=guardar_pedido
