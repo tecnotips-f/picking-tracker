@@ -16,7 +16,6 @@ def main(page: ft.Page):
     txt_fecha = ft.TextField(
         label="Fecha (AAAA-MM-DD)",
         value=fecha_actual,
-        icon=ft.icons.calendar_today,
         on_change=lambda e: actualizar_vista_diaria()
     )
     txt_sg = ft.TextField(
