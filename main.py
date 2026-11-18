@@ -47,7 +47,7 @@ def main(page: ft.Page):
 
     lbl_estimado = ft.Text("Ingreso estimado del pedido: $ 0", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
     lbl_total_dia = ft.Text("$ 0", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-    lbl_conteo_dia = ft.Text("0 pedidos", size=14, color=ft.Colors.WHITE70)
+    lbl_conteo_dia = ft.Text("0 pedidos", size=14, color=ft.Colors.WHITE)
     lista_pedidos_container = ft.Column(spacing=10)
 
     def obtener_valores_numericos():
