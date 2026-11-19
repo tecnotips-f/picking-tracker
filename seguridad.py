@@ -5,8 +5,46 @@ import re
 import secrets
 from pathlib import Path
 
-_RUTA_PEPPER = Path(__file__).with_name(".picking_pepper")
 _pepper_cache = None
+NOMBRE_PEPPER = ".picking_pepper"
+
+
+def carpeta_codigo():
+    return Path(__file__).resolve().parent
+
+
+def carpetas_de_datos():
+    """Carpetas donde pueden estar la base de datos y el archivo secreto, por prioridad:
+    la que define Flet (FLET_APP_STORAGE_DATA), la de `flet run` (.flet/storage/data) y la del código."""
+    codigo = carpeta_codigo()
+    candidatas = []
+    env = os.environ.get("FLET_APP_STORAGE_DATA")
+    if env:
+        candidatas.append(Path(env))
+    candidatas += [codigo / ".flet" / "storage" / "data", codigo]
+    unicas, vistas = [], set()
+    for c in candidatas:
+        clave = os.path.normcase(str(c.resolve()))
+        if clave not in vistas:
+            vistas.add(clave)
+            unicas.append(c)
+    return unicas
+
+
+def carpeta_destino():
+    """Donde se CREAN archivos nuevos: la carpeta de datos de Flet (móvil / flet run) o la del código."""
+    env = os.environ.get("FLET_APP_STORAGE_DATA")
+    return Path(env) if env else carpeta_codigo()
+
+
+def ruta_pepper_existente():
+    """Si ya existe un archivo secreto se REUTILIZA (cambiarlo invalida todas las claves guardadas).
+    Prioridad: carpeta del código (donde lo creaban las versiones anteriores) y luego las carpetas de datos."""
+    for carpeta in [carpeta_codigo()] + carpetas_de_datos():
+        ruta = carpeta / NOMBRE_PEPPER
+        if ruta.is_file():
+            return ruta
+    return None
 
 
 def _pepper():
@@ -18,13 +56,15 @@ def _pepper():
         env = os.environ.get("PICKING_PEPPER")
         if env:
             _pepper_cache = env.encode("utf-8")
-        elif _RUTA_PEPPER.exists():
-            _pepper_cache = bytes.fromhex(_RUTA_PEPPER.read_text().strip())
+        elif ruta_pepper_existente() is not None:
+            _pepper_cache = bytes.fromhex(ruta_pepper_existente().read_text().strip())
         else:
             valor = secrets.token_hex(32)
-            _RUTA_PEPPER.write_text(valor)
+            ruta = carpeta_destino() / NOMBRE_PEPPER
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            ruta.write_text(valor)
             try:
-                os.chmod(_RUTA_PEPPER, 0o600)
+                os.chmod(ruta, 0o600)
             except OSError:
                 pass
             _pepper_cache = bytes.fromhex(valor)

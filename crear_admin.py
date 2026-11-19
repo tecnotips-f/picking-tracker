@@ -14,6 +14,7 @@ MIN_CLAVE_ADMIN = 8   # el administrador puede activar/desactivar usuarios: clav
 
 def main():
     db = DatabaseManager()
+    print(f"Base de datos: {db.db_name}")
     rut = normalizar_rut(input("RUT del administrador (sin puntos ni guion): "))
     if not validar_rut(rut):
         print("RUT inválido.")

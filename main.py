@@ -2,14 +2,34 @@ import flet as ft
 from datetime import datetime, timedelta
 import threading
 import platform
-import cv2
-import zxingcpp
+try:
+    import cv2          # Solo disponibles en PC/laptop; en Android (APK) no existen
+    import zxingcpp
+except ImportError:
+    cv2 = None
+    zxingcpp = None
 from calculator import calcular_ingreso
 from database import DatabaseManager
+from firebase_sync import FirebaseCloudSync
 from seguridad import normalizar_rut, validar_rut, validar_id_boosmap
+import asyncio
+import io
+try:
+    import flet_camera as fc                      # cámara del móvil
+    import flet_permission_handler as fph         # permiso de cámara en Android
+except ImportError:
+    fc = None
+    fph = None
+try:
+    from pyzbar.pyzbar import decode as zbar_decode   # lector de códigos para Android
+    from PIL import Image
+except ImportError:
+    zbar_decode = None
+    Image = None
 
 if platform.system() == "Windows":
     import winsound
+
 
 def main(page: ft.Page):
     page.title = "Control de Picking"
@@ -18,47 +38,32 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.ADAPTIVE
 
     db = DatabaseManager()
+    cloud = FirebaseCloudSync()
 
-<<<<<<< HEAD
-    # Controles de Entrada
-    txt_fecha = ft.TextField(
-        label="Fecha (AAAA-MM-DD)",
-        value=fecha_actual,
-        on_change=lambda e: actualizar_vista_diaria()
-    )
-    txt_sg = ft.TextField(
-        label="Número de SG",
-        hint_text="Ej: 104589",
-        keyboard_type=ft.KeyboardType.NUMBER
-    )
-    rg_tipo = ft.RadioGroup(
-        value="Picking",
-        on_change=lambda e: actualizar_vista_previa_monto(),
-        content=ft.Row([
-            ft.Radio(value="Picking", label="Picking ($1300 + $80/SKU)"),
-            ft.Radio(value="Driver", label="Driver ($1850 + $38/Art.)"),
-        ], wrap=True)
-    )
-    txt_skus = ft.TextField(
-        label="Cant. SKUs",
-        keyboard_type=ft.KeyboardType.NUMBER,
-        expand=True,
-        on_change=lambda e: actualizar_vista_previa_monto()
-    )
-    txt_articulos = ft.TextField(
-        label="Cant. Artículos",
-        keyboard_type=ft.KeyboardType.NUMBER,
-        expand=True,
-        on_change=lambda e: actualizar_vista_previa_monto()
-    )
+    es_movil = (not page.web) and page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS)
+    haptic = None
+    permiso_camara = None
+    if es_movil:
+        haptic = ft.HapticFeedback()
+        page.services.append(haptic)
+        if fph is not None:
+            permiso_camara = fph.PermissionHandler()
+            page.services.append(permiso_camara)
 
-    lbl_estimado = ft.Text("Ingreso estimado del pedido: $ 0", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
-    lbl_total_dia = ft.Text("$ 0", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-    lbl_conteo_dia = ft.Text("0 pedidos", size=14, color=ft.Colors.WHITE)
-    lista_pedidos_container = ft.Column(spacing=10)
+    def senal(ok=True):
+        """Aviso al usuario: pitido en Windows, vibración en el móvil (si el equipo la tiene)."""
+        if platform.system() == "Windows":
+            try:
+                winsound.Beep(2500, 300) if ok else winsound.Beep(1000, 600)
+            except Exception:
+                pass
+            return
+        if haptic is not None:
+            try:
+                page.run_task(haptic.medium_impact if ok else haptic.vibrate)
+            except Exception:
+                pass
 
-    def obtener_valores_numericos():
-=======
     def mostrar_alerta(mensaje, es_error=False, ms=2000):
         """Muestra notificaciones visuales (se ocultan solas; 2 segundos por defecto)"""
         snack = ft.SnackBar(
@@ -66,7 +71,6 @@ def main(page: ft.Page):
             bgcolor="red" if es_error else "green",
             duration=ms,
         )
->>>>>>> fd06846 (Actualiza interfaz, edicion de pedidos y rutas)
         try:
             page.show_dialog(snack)
         except AttributeError:
@@ -89,26 +93,26 @@ def main(page: ft.Page):
     page.on_resize = ajustar_ancho
 
     # =====================================================================
-    #  PANTALLA DE ACCESO (REDISEÑADA CON COLOR Y CENTRADA)
+    #  PANTALLA DE ACCESO
     # =====================================================================
     def mostrar_login(aviso=None):
         page.clean()
         ancho_campo = 320
 
         txt_rut = ft.TextField(
-            label="RUT (sin puntos ni guion)", 
+            label="RUT (sin puntos ni guion)",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
             hint_text="Ej: 123456785 o 12345678K",
             color="#000000",
-            width=ancho_campo, 
+            width=ancho_campo,
             autofocus=True,
             border_color="#3f51b5",
             focused_border_color="#1a237e"
         )
         txt_clave = ft.TextField(
-            label="Clave (ID Boosmap)", 
+            label="Clave (ID Boosmap)",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
-            password=True, 
+            password=True,
             can_reveal_password=True,
             color="#000000",
             width=ancho_campo,
@@ -116,39 +120,8 @@ def main(page: ft.Page):
             focused_border_color="#1a237e"
         )
 
-<<<<<<< HEAD
-            tarjeta = ft.Container(
-                padding=12,
-                border_radius=10,
-                bgcolor=ft.Colors.GREY_100,
-                border=ft.border.all(1, ft.Colors.GREY_300),
-                content=ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    controls=[
-                        ft.Column(
-                            spacing=2,
-                            expand=True,
-                            controls=[
-                                ft.Text(f"SG: {sg}  •  {tipo.upper()}", weight=ft.FontWeight.BOLD, size=15),
-                                ft.Text(f"SKUs: {skus} | Artículos: {arts}", size=13, color=ft.Colors.GREY_700),
-                            ]
-                        ),
-                        ft.Row(
-                            spacing=4,
-                            controls=[
-                                ft.Text(f"$ {ingreso:,.0f}".replace(",", "."), weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.GREEN_700),
-                                ft.IconButton(
-                                    icon=ft.icons.DELETE_OUTLINE,
-                                    icon_color=ft.Colors.RED_400,
-                                    tooltip="Eliminar registro",
-                                    on_click=lambda e, pid=p_id: eliminar_registro(pid)
-                                )
-                            ]
-                        )
-                    ]
-=======
         reg_rut = ft.TextField(
-            label="RUT (sin puntos ni guion)", 
+            label="RUT (sin puntos ni guion)",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
             hint_text="Ej: 123456785 o 12345678K",
             color="#000000",
@@ -156,14 +129,14 @@ def main(page: ft.Page):
             border_color="#3f51b5"
         )
         reg_nombre = ft.TextField(
-            label="Nombre completo", 
+            label="Nombre completo",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
-            color="#000000", 
+            color="#000000",
             width=ancho_campo,
             border_color="#3f51b5"
         )
         reg_correo = ft.TextField(
-            label="Correo (opcional)", 
+            label="Correo (opcional)",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
             color="#000000",
             keyboard_type=ft.KeyboardType.EMAIL,
@@ -171,30 +144,32 @@ def main(page: ft.Page):
             border_color="#3f51b5"
         )
         reg_id = ft.TextField(
-            label="ID Boosmap (6 dígitos)", 
+            label="ID Boosmap (6 dígitos)",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
             color="#000000",
-            password=True, 
+            password=True,
             can_reveal_password=True,
-            keyboard_type=ft.KeyboardType.NUMBER, 
+            keyboard_type=ft.KeyboardType.NUMBER,
             width=ancho_campo,
             border_color="#3f51b5"
         )
         reg_id2 = ft.TextField(
-            label="Repite tu ID Boosmap", 
+            label="Repite tu ID Boosmap",
             label_style=ft.TextStyle(color="#0d47a1", weight=ft.FontWeight.BOLD),
             color="#000000",
-            password=True, 
+            password=True,
             can_reveal_password=True,
-            keyboard_type=ft.KeyboardType.NUMBER, 
+            keyboard_type=ft.KeyboardType.NUMBER,
             width=ancho_campo,
             border_color="#3f51b5"
         )
 
         def entrar(e=None):
-            resultado, dato = db.autenticar(txt_rut.value or "", (txt_clave.value or "").strip())
+            rut_ingresado = normalizar_rut(txt_rut.value or "")
+            clave_ingresada = (txt_clave.value or "").strip()
+            resultado, dato = db.autenticar(rut_ingresado, clave_ingresada)
             if resultado == "ok":
-                iniciar_app(dato)
+                iniciar_app(dato, clave_ingresada)
             elif resultado == "bloqueado":
                 mostrar_alerta(f"Demasiados intentos. Intenta de nuevo en {dato} min.", True, 4000)
             elif resultado == "inactivo":
@@ -302,7 +277,6 @@ def main(page: ft.Page):
                     [tarjeta_login],
                     alignment=ft.MainAxisAlignment.CENTER,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
->>>>>>> fd06846 (Actualiza interfaz, edicion de pedidos y rutas)
                 )
             ],
             alignment=ft.MainAxisAlignment.CENTER,
@@ -318,27 +292,111 @@ def main(page: ft.Page):
     # =====================================================================
     #  APLICACIÓN PRINCIPAL
     # =====================================================================
-    def iniciar_app(usuario):
+    def iniciar_app(usuario, clave_sesion=""):
         page.clean()
         page.bgcolor = None
         uid = usuario["id"]
+        rut_usuario = usuario["rut"]
         es_admin = usuario["rol"] == "admin"
 
         fecha_actual = datetime.now().strftime("%Y-%m-%d")
         primer_dia_mes = datetime.now().replace(day=1).strftime("%Y-%m-%d")
 
-        estado = {"rango": None, "mostrar": False}
+        estado = {"rango": None, "mostrar": False, "sincronizando": False}
+        tarifas = {"vigentes": db.obtener_tarifas()}
 
-        TARIFA_SHOPPER_SG = 3600
-        TARIFA_SHOPPER_UNIDAD = 38
+        # ---- Botón / Indicador de estado de Firebase ----
+        btn_sync = ft.Button(
+            content="☁️ Nube",
+            bgcolor="#546e7a",
+            color="white",
+            height=40,
+            tooltip="Sincronizar registros con Firebase (cpicking)",
+            on_click=lambda e: lanzar_sincronizacion(descargar=True, avisar=True),
+        )
+
+        def actualizar_badge_nube(conectado=None):
+            pendientes = len(db.obtener_pendientes_sync(uid))
+            if not cloud.configurado:
+                btn_sync.content = "⚠️ Sin API Key"
+                btn_sync.bgcolor = "#e65100"
+            elif pendientes > 0:
+                btn_sync.content = f"⏳ {pendientes} pendiente(s)"
+                btn_sync.bgcolor = "#ef6c00"
+            elif conectado is False:
+                btn_sync.content = "📴 Offline"
+                btn_sync.bgcolor = "#616161"
+            else:
+                btn_sync.content = "☁️ Sincronizado"
+                btn_sync.bgcolor = "#2e7d32"
+            try:
+                page.update()
+            except Exception:
+                pass
+
+        def _tarea_sincronizar(descargar=False, avisar=False, eliminar_sg=None):
+            if estado["sincronizando"]:
+                return
+            estado["sincronizando"] = True
+            try:
+                if not cloud.configurado:
+                    actualizar_badge_nube(False)
+                    if avisar:
+                        mostrar_alerta("Falta configurar FIREBASE_API_KEY en firebase_sync.py.", True, 3500)
+                    return
+
+                if not cloud.id_token and clave_sesion:
+                    cloud.autenticar_o_registrar(rut_usuario, clave_sesion)
+
+                if not cloud.id_token:
+                    actualizar_badge_nube(False)
+                    if avisar:
+                        mostrar_alerta("Sin conexión a Firebase. Los datos siguen a salvo en el teléfono.", True, 3000)
+                    return
+
+                # 1. Si se eliminó un pedido localmente, borrarlo también en Firestore
+                if eliminar_sg:
+                    cloud.eliminar_pedido_nube(rut_usuario, eliminar_sg)
+
+                # 2. Subir todos los pendientes locales
+                pendientes = db.obtener_pendientes_sync(uid)
+                subidos = 0
+                for p in pendientes:
+                    if cloud.subir_pedido(rut_usuario, p):
+                        db.marcar_sincronizado(p["id"])
+                        subidos += 1
+
+                # 3. Descargar respaldo desde Firestore si se solicita (ej. al iniciar sesión o pulsar botón)
+                importados = 0
+                if descargar:
+                    remotos = cloud.descargar_pedidos(rut_usuario)
+                    if remotos:
+                        importados = db.importar_desde_nube(uid, remotos)
+                        if importados > 0:
+                            actualizar_vista_diaria()
+
+                actualizar_badge_nube(True)
+                if avisar:
+                    mostrar_alerta(f"Nube al día: {subidos} subido(s), {importados} recuperado(s).")
+            finally:
+                estado["sincronizando"] = False
+
+        def lanzar_sincronizacion(descargar=False, avisar=False, eliminar_sg=None):
+            threading.Thread(
+                target=_tarea_sincronizar,
+                args=(descargar, avisar, eliminar_sg),
+                daemon=True,
+            ).start()
 
         def calcular_monto(tipo, skus, arts):
-            if tipo == "Shopper":
-                return TARIFA_SHOPPER_SG + TARIFA_SHOPPER_UNIDAD * arts
-            return calcular_ingreso(tipo, skus, arts)
+            return calcular_ingreso(tipo, skus, arts, tarifas["vigentes"])
 
         def cerrar_sesion(aviso=None):
             camara_activa.clear()
+            cam_estado["activa"] = False
+            cam_estado["cam"] = None
+            cloud.id_token = None
+            cloud.refresh_token = None
             mostrar_login(aviso)
 
         def sesion_activa():
@@ -364,10 +422,10 @@ def main(page: ft.Page):
             value="Picking",
             on_change=lambda e: actualizar_vista_previa_monto(),
             content=ft.Row([
-                ft.Radio(value="Picking", label="Picking ($1300 + $80/SKU)"),
-                ft.Radio(value="Driver", label="Driver ($1850 + $38/Art.)"),
-                ft.Radio(value="Shopper", label="Shopper ($3600 + $38/Unidad)"),
-            ], wrap=True)
+                ft.Radio(value="Picking", label="Picking"),
+                ft.Radio(value="Driver", label="Driver"),
+                ft.Radio(value="Shopper", label="Shopper"),
+            ], wrap=False, alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
         )
 
         txt_skus = ft.TextField(
@@ -410,18 +468,10 @@ def main(page: ft.Page):
 
             if db.verificar_sg_existente(sg_encontrado, uid):
                 mostrar_alerta(f"⚠️ El SG '{sg_encontrado}' ya existe en la base de datos.", es_error=True)
-                if platform.system() == "Windows":
-                    try:
-                        winsound.Beep(1000, 600)
-                    except Exception:
-                        pass
+                senal(False)
                 return
 
-            if platform.system() == "Windows":
-                try:
-                    winsound.Beep(2500, 300)
-                except Exception:
-                    pass
+            senal(True)
 
             txt_sg.value = sg_encontrado
             if skus_detectados is not None:
@@ -463,22 +513,6 @@ def main(page: ft.Page):
 
                     cv2.imshow(ventana_nombre, frame)
 
-<<<<<<< HEAD
-    tarjeta_resumen = ft.Container(
-        padding=18,
-        border_radius=12,
-        gradient=ft.LinearGradient(
-            begin="top_left",
-            end="bottom_right",
-            colors=[ft.Colors.INDIGO_700, ft.Colors.BLUE_600]
-        ),
-        content=ft.Column([
-            ft.Text("INGRESO TOTAL DEL DÍA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-            lbl_total_dia,
-            lbl_conteo_dia
-        ])
-    )
-=======
                     if cv2.waitKey(1) & 0xFF == 27:
                         break
                     if cv2.getWindowProperty(ventana_nombre, cv2.WND_PROP_VISIBLE) < 1:
@@ -498,14 +532,109 @@ def main(page: ft.Page):
                     pass
                 camara_activa.clear()
                 _estado_boton(False)
->>>>>>> fd06846 (Actualiza interfaz, edicion de pedidos y rutas)
 
             if codigo_encontrado:
                 procesar_texto_escaneado(codigo_encontrado)
 
-        def iniciar_escaneo(e):
-            if page.web or page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS):
-                mostrar_alerta("En móvil/navegador el escaneo requiere la cámara del navegador. Ingresa el SG manualmente.", es_error=True)
+        # ---- Cámara del móvil ----
+        cam_estado = {"cam": None, "activa": False, "procesando": False}
+        panel_camara = ft.Container(
+            visible=False,
+            height=300,
+            bgcolor="black",
+            border_radius=12,
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        )
+
+        def _leer_codigo(jpeg_bytes):
+            if zbar_decode is None or Image is None:
+                return None
+            try:
+                imagen = Image.open(io.BytesIO(jpeg_bytes))
+                resultados = zbar_decode(imagen)
+                if resultados:
+                    return resultados[0].data.decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            return None
+
+        async def cerrar_camara_movil():
+            cam_estado["activa"] = False
+            cam_estado["cam"] = None
+            cam = panel_camara.content
+            if cam is not None:
+                try:
+                    await cam.stop_image_stream()
+                except Exception:
+                    pass
+            panel_camara.content = None
+            panel_camara.visible = False
+            _estado_boton(False)
+
+        async def _al_recibir_cuadro(e):
+            if not cam_estado["activa"] or cam_estado["procesando"]:
+                return
+            cam_estado["procesando"] = True
+            try:
+                texto = await asyncio.to_thread(_leer_codigo, e.bytes)
+            finally:
+                cam_estado["procesando"] = False
+            if texto and cam_estado["activa"]:
+                cam_estado["activa"] = False
+                await cerrar_camara_movil()
+                procesar_texto_escaneado(texto)
+
+        async def abrir_camara_movil():
+            if fc is None or permiso_camara is None:
+                mostrar_alerta("El escaneo con cámara no está disponible en este dispositivo. Ingresa el SG manualmente.",
+                               es_error=True, ms=3000)
+                return
+            try:
+                permiso = await permiso_camara.request(fph.Permission.CAMERA)
+            except Exception:
+                permiso = None
+            if permiso != fph.PermissionStatus.GRANTED:
+                mostrar_alerta("Sin permiso de cámara. Actívalo en los Ajustes del teléfono o ingresa el SG manualmente.",
+                               es_error=True, ms=4000)
+                return
+
+            cam = fc.Camera(expand=True, preview_enabled=True, on_stream_image=_al_recibir_cuadro)
+            panel_camara.content = cam
+            panel_camara.visible = True
+            _estado_boton(True)
+            try:
+                camaras = await cam.get_available_cameras()
+                if not camaras:
+                    raise RuntimeError("Sin cámaras disponibles")
+                trasera = next((c for c in camaras if c.lens_direction == fc.CameraLensDirection.BACK), camaras[0])
+                await cam.initialize(
+                    description=trasera,
+                    resolution_preset=fc.ResolutionPreset.HIGH,
+                    enable_audio=False,
+                    image_format_group=fc.ImageFormatGroup.JPEG,
+                )
+                if not await cam.supports_image_streaming():
+                    raise RuntimeError("Este equipo no permite leer fotogramas de la cámara")
+                cam_estado["cam"] = cam
+                cam_estado["activa"] = True
+                await cam.start_image_stream()
+            except Exception as ex:
+                print(f"Error al abrir la cámara: {ex}")
+                await cerrar_camara_movil()
+                mostrar_alerta("No se pudo abrir la cámara. Ingresa el SG manualmente.", es_error=True, ms=3000)
+
+        async def iniciar_escaneo(e):
+            if es_movil:
+                if panel_camara.visible:
+                    await cerrar_camara_movil()
+                else:
+                    await abrir_camara_movil()
+                return
+            if page.web:
+                mostrar_alerta("En el navegador el escaneo con cámara no está disponible. Ingresa el SG manualmente.", es_error=True)
+                return
+            if cv2 is None or zxingcpp is None:
+                mostrar_alerta("El escaneo con cámara no está disponible en este dispositivo. Ingresa el SG manualmente.", es_error=True, ms=3000)
                 return
             if camara_activa.is_set():
                 camara_activa.clear()
@@ -541,14 +670,14 @@ def main(page: ft.Page):
             lbl_estimado.value = f"Ingreso estimado del pedido: $ {monto:,.0f}".replace(",", ".")
             page.update()
 
-        def eliminar_registro(pedido_id):
+        def eliminar_registro(pedido_id, sg_valor):
             if not sesion_activa():
                 return
             db.eliminar_pedido(pedido_id, uid)
             actualizar_vista_diaria()
+            lanzar_sincronizacion(eliminar_sg=sg_valor)
 
         def abrir_dialogo_editar(p_id, fecha_actual_reg, sg_actual, tipo_actual, skus_actual, arts_actual):
-            """Muestra un diálogo modal para editar los datos del pedido"""
             if not sesion_activa():
                 return
 
@@ -624,7 +753,8 @@ def main(page: ft.Page):
                         mostrar_alerta("Para Shopper debes ingresar al menos 1 unidad.", True)
                         return
 
-                    if nuevo_sg != str(sg_actual).strip() and db.verificar_sg_existente(nuevo_sg, uid):
+                    sg_anterior = str(sg_actual).strip()
+                    if nuevo_sg != sg_anterior and db.verificar_sg_existente(nuevo_sg, uid):
                         mostrar_alerta(f"⚠️ El SG '{nuevo_sg}' ya existe en tus registros.", True)
                         return
 
@@ -635,6 +765,8 @@ def main(page: ft.Page):
 
                     cerrar_dialogo()
                     actualizar_vista_diaria()
+                    actualizar_badge_nube()
+                    lanzar_sincronizacion(eliminar_sg=sg_anterior if nuevo_sg != sg_anterior else None)
                     mostrar_alerta("Pedido actualizado correctamente.")
                 except ValueError:
                     mostrar_alerta("Verifica que SKUs y Artículos sean números válidos.", True)
@@ -702,7 +834,7 @@ def main(page: ft.Page):
                                     padding=4,
                                     border_radius=6,
                                     ink=True,
-                                    on_click=lambda e, pid=p_id: eliminar_registro(pid)
+                                    on_click=lambda e, pid=p_id, s=sg: eliminar_registro(pid, s)
                                 ),
                             ], spacing=4)
                         ),
@@ -831,6 +963,9 @@ def main(page: ft.Page):
             return ft.Button(content=texto, bgcolor=color, color="white", height=42, on_click=accion)
 
         panel_admin = ft.Column(visible=False, spacing=10)
+        panel_tarifas = ft.Column(visible=False, spacing=10)
+        btn_tarifas = ft.Button(content="💲 TARIFAS", bgcolor="#8e24aa", color="white", height=40,
+                                visible=es_admin, on_click=lambda e: alternar_panel_tarifas())
         btn_usuarios = ft.Button(content="👥 USUARIOS", bgcolor="#5c6bc0", color="white", height=40,
                                  visible=es_admin, on_click=lambda e: alternar_panel_admin())
 
@@ -909,7 +1044,60 @@ def main(page: ft.Page):
                 return
             panel_admin.visible = not panel_admin.visible
             if panel_admin.visible:
+                panel_tarifas.visible = False
                 renderizar_usuarios()
+            page.update()
+
+        def renderizar_tarifas():
+            actuales = db.obtener_tarifas()
+            detalle = {"Picking": "por SKU", "Driver": "por artículo", "Shopper": "por unidad"}
+            campos, filas = {}, []
+            for tipo in ("Picking", "Driver", "Shopper"):
+                t = actuales[tipo]
+                tf_base = ft.TextField(label=f"{tipo}: base por pedido ($)", value=f"{t['base']:g}",
+                                       keyboard_type=ft.KeyboardType.NUMBER, expand=True)
+                tf_unidad = ft.TextField(label=f"{tipo}: valor {detalle[tipo]} ($)", value=f"{t['unidad']:g}",
+                                         keyboard_type=ft.KeyboardType.NUMBER, expand=True)
+                campos[tipo] = (tf_base, tf_unidad)
+                filas.append(ft.Row([tf_base, tf_unidad], spacing=10))
+
+            def guardar_tarifas(e):
+                if not es_admin or not sesion_activa():
+                    return
+                try:
+                    nuevas = {
+                        tipo: {"base": float((b.value or "").strip().replace(",", ".")),
+                               "unidad": float((u.value or "").strip().replace(",", "."))}
+                        for tipo, (b, u) in campos.items()
+                    }
+                except ValueError:
+                    mostrar_alerta("Revisa que todos los montos sean números.", es_error=True)
+                    return
+                ok, mensaje = db.guardar_tarifas(uid, nuevas)
+                if ok:
+                    tarifas["vigentes"] = db.obtener_tarifas()
+                    actualizar_vista_previa_monto()
+                mostrar_alerta(mensaje, es_error=not ok)
+
+            panel_tarifas.controls = [
+                ft.Text("Tarifas de cálculo", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text("Solo el administrador ve y cambia estos montos. Los pedidos ya guardados conservan el "
+                        "ingreso con que se registraron; los pedidos nuevos y los que se editen usan las tarifas vigentes.",
+                        size=13, color="#666666"),
+                *filas,
+                ft.Button(content="GUARDAR TARIFAS", bgcolor="#8e24aa", color="white", height=44,
+                          on_click=guardar_tarifas),
+                ft.Divider(height=10),
+            ]
+            page.update()
+
+        def alternar_panel_tarifas():
+            if not es_admin or not sesion_activa():
+                return
+            panel_tarifas.visible = not panel_tarifas.visible
+            if panel_tarifas.visible:
+                panel_admin.visible = False
+                renderizar_tarifas()
             page.update()
 
         def guardar_pedido(e):
@@ -925,11 +1113,7 @@ def main(page: ft.Page):
 
             if db.verificar_sg_existente(sg_val, uid):
                 mostrar_alerta(f"⚠️ El SG '{sg_val}' ya existe en la base de datos.", es_error=True)
-                if platform.system() == "Windows":
-                    try:
-                        winsound.Beep(1000, 600)
-                    except Exception:
-                        pass
+                senal(False)
                 return
 
             if rg_tipo.value == "Picking" and skus <= 0:
@@ -945,7 +1129,7 @@ def main(page: ft.Page):
                 return
 
             ingreso = calcular_monto(rg_tipo.value, skus, arts)
-            db.insertar_pedido(fecha_val, sg_val, rg_tipo.value, skus, arts, ingreso, uid)
+            db.insertar_pedido(fecha_val, sg_val, rg_tipo.value, skus, arts, ingreso, uid, sincronizado=0)
 
             txt_sg.value = ""
             txt_skus.value = ""
@@ -953,6 +1137,8 @@ def main(page: ft.Page):
             actualizar_vista_previa_monto()
             estado["mostrar"] = True
             actualizar_vista_diaria()
+            actualizar_badge_nube()
+            lanzar_sincronizacion()
 
             mostrar_alerta("Pedido registrado correctamente.")
 
@@ -962,7 +1148,9 @@ def main(page: ft.Page):
                         size=16, weight=ft.FontWeight.BOLD),
                 ft.Row(
                     [
+                        btn_sync,
                         btn_usuarios,
+                        btn_tarifas,
                         ft.Button(content="Cerrar sesión", bgcolor="#757575", color="white", height=40,
                                   on_click=lambda e: cerrar_sesion()),
                     ],
@@ -988,11 +1176,13 @@ def main(page: ft.Page):
         page.add(
             encabezado,
             panel_admin,
+            panel_tarifas,
             tarjeta_resumen,
             ft.Divider(height=10, color="transparent"),
             ft.Text("Registrar Nuevo Pedido", size=18, weight=ft.FontWeight.BOLD),
             txt_fecha,
             btn_escanear,
+            panel_camara,
             txt_sg,
             ft.Text("Modalidad de Preparación:", size=14, weight=ft.FontWeight.W_500),
             rg_tipo,
@@ -1034,15 +1224,14 @@ def main(page: ft.Page):
         )
 
         actualizar_vista_diaria()
+        actualizar_badge_nube()
+        lanzar_sincronizacion(descargar=True)
         if es_admin:
             renderizar_usuarios()
         ajustar_ancho()
 
     mostrar_login()
 
+
 if __name__ == "__main__":
-<<<<<<< HEAD
     ft.run(main)
-=======
-    ft.run(main)
->>>>>>> fd06846 (Actualiza interfaz, edicion de pedidos y rutas)

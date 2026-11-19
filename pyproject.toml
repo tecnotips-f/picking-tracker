@@ -1,21 +1,20 @@
-$toml = @"
 [project]
-name = "picking-tracker"
+name = "control-picking"
 version = "1.0.0"
-description = "Aplicacion de seguimiento de picking"
-requires-python = ">=3.9"
+description = "Control de Picking"
+requires-python = ">=3.12"
 dependencies = [
-    "flet",
-    "opencv-python-headless",
-    "zxing-cpp",
+    "flet==1.1.2",
+    "flet-camera==1.1.2",
+    "flet-permission-handler==1.1.2",
+    "pillow",
+    "requests",
 ]
 
 [tool.flet]
-org = "com.tecnotips"
-product = "Picking Tracker"
+product = "Control de Picking"
+org = "cl.controlpicking"
 
-[tool.flet.android]
-permission."android.permission.CAMERA" = true
-"@
-
-[System.IO.File]::WriteAllText("$PWD\pyproject.toml", $toml, [System.Text.UTF8Encoding]::new($false))
+[tool.flet.android.permission]
+"android.permission.CAMERA" = true
+"android.permission.INTERNET" = true
