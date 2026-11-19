@@ -139,6 +139,14 @@ class DatabaseManager:
             ).fetchone()
             return self._usuario(fila)
 
+    def obtener_usuario_por_rut(self, rut):
+        rut = normalizar_rut(rut)
+        with self.conectar() as conn:
+            fila = conn.execute(
+                "SELECT id, rut, nombre, correo, rol, activo FROM usuarios WHERE rut = ?", (rut,)
+            ).fetchone()
+            return self._usuario(fila)
+
     def registrar_usuario(self, rut, nombre, correo, id_boosmap):
         """Crea una cuenta INACTIVA (pendiente). El administrador debe activarla."""
         rut = normalizar_rut(rut)
@@ -191,6 +199,38 @@ class DatabaseManager:
         except sqlite3.IntegrityError:
             return False, "Esa clave ya la usa otro usuario. Elige una distinta."
         return True, f"Administrador listo. Pedidos antiguos asignados: {huerfanos}."
+
+    def sincronizar_usuario_nube(self, rut, nombre, correo, clave_plana=None, rol="usuario", activo=False):
+        """Crea o actualiza en SQLite local un usuario recibido desde Firebase."""
+        rut = normalizar_rut(rut)
+        if not validar_rut(rut):
+            return None
+        correo = (correo or "").strip() or None
+        activo_int = 1 if activo else 0
+        with self.conectar() as conn:
+            fila = conn.execute("SELECT id FROM usuarios WHERE rut = ?", (rut,)).fetchone()
+            if fila:
+                if clave_plana:
+                    conn.execute(
+                        "UPDATE usuarios SET nombre=?, correo=?, clave_hash=?, rol=?, activo=? WHERE rut=?",
+                        (nombre, correo, hash_clave(clave_plana), rol, activo_int, rut)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE usuarios SET nombre=?, correo=?, rol=?, activo=? WHERE rut=?",
+                        (nombre, correo, rol, activo_int, rut)
+                    )
+                conn.commit()
+            else:
+                clave_para_hash = clave_plana if clave_plana else f"pendiente_{rut}_{datetime.now().timestamp()}"
+                conn.execute(
+                    "INSERT INTO usuarios (rut, nombre, correo, clave_hash, rol, activo, creado) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (rut, nombre, correo, hash_clave(clave_para_hash), rol, activo_int,
+                     datetime.now().isoformat(timespec="seconds"))
+                )
+                conn.commit()
+        return self.obtener_usuario_por_rut(rut)
 
     def autenticar(self, rut, clave):
         """Devuelve (estado, dato): 'ok' + usuario | 'credenciales' | 'inactivo' | 'bloqueado' + minutos."""
