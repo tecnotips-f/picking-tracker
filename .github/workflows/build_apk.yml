@@ -1,4 +1,4 @@
-﻿name: Compilar APK Flet
+name: Compilar APK Flet
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Descargar código del repositorio
+      - name: Descargar codigo del repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Python
@@ -24,6 +24,28 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "17"
+
+      - name: Generar pyproject.toml limpio
+        run: |
+          cat << 'EOF' > pyproject.toml
+          [project]
+          name = "picking-tracker"
+          version = "1.0.0"
+          description = "Aplicacion de seguimiento de picking"
+          requires-python = ">=3.9"
+          dependencies = [
+              "flet",
+              "opencv-python-headless",
+              "zxing-cpp",
+          ]
+
+          [tool.flet]
+          org = "com.tecnotips"
+          product = "Picking Tracker"
+
+          [tool.flet.android]
+          permission."android.permission.CAMERA" = true
+          EOF
 
       - name: Instalar dependencias de Python y Flet
         run: |
