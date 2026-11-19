@@ -1,4 +1,4 @@
-﻿$toml = @"
+$toml = @"
 [project]
 name = "picking-tracker"
 version = "1.0.0"
