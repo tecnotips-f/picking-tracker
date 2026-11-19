@@ -25,8 +25,11 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Configurar Android SDK y Licencias
-        uses: android-actions/setup-android@v3
+      - name: Instalar dependencias de sistema y aceptar licencias Android
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libglu1-mesa xz-utils unzip
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Instalar Flet y dependencias
         run: |
