@@ -1,0 +1,47 @@
+﻿name: Compilar APK Flet
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Instalar dependencias de Python y Flet
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compilar APK
+        run: flet build apk
+
+      - name: Subir APK generado como Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: picking-tracker-apk
+          path: build/apk/*.apk
+          if-no-files-found: error
