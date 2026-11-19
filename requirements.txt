@@ -1,1 +1,3 @@
-flet>=0.25.0
+flet
+opencv-python-headless
+zxing-cpp
