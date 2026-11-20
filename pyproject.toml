@@ -7,9 +7,9 @@ dependencies = [
     "flet==1.1.2",
     "flet-camera==1.1.2",
     "flet-permission-handler==1.1.2",
+    "opencv-python-headless",
     "pillow",
     "requests",
-    "zxing-cpp",
 ]
 
 [tool.flet]

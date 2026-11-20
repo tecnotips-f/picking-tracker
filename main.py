@@ -3,11 +3,13 @@ from datetime import datetime, timedelta
 import threading
 import platform
 try:
-    import cv2          # Solo disponible en PC/laptop; en Android (APK) no existe
+    import cv2          # Disponible en PC y en Android (opencv-python-headless)
+    import numpy as np
 except ImportError:
     cv2 = None
+    np = None
 try:
-    import zxingcpp     # Disponible tanto en PC como en Android (APK)
+    import zxingcpp     # Opcional en PC/laptop
 except ImportError:
     zxingcpp = None
 from calculator import calcular_ingreso
@@ -614,21 +616,34 @@ def main(page: ft.Page):
             alignment=ft.Alignment(0, 0),
         )
 
+        _detector_barras = cv2.barcode.BarcodeDetector() if cv2 is not None else None
+        _detector_qr = cv2.QRCodeDetector() if cv2 is not None else None
+
         def _leer_codigo(jpeg_bytes):
-            if zxingcpp is None or Image is None:
+            if cv2 is None or np is None:
                 return None
             try:
-                imagen = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+                arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    return None
                 # Orientar el frame a horizontal por defecto si el sensor lo entrega vertical
-                if imagen.height > imagen.width:
-                    imagen = imagen.rotate(270, expand=True)
-                resultados = zxingcpp.read_barcodes(imagen)
-                if not resultados:
-                    # Respaldo: intentar en la orientación original sin rotar
-                    imagen_orig = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
-                    resultados = zxingcpp.read_barcodes(imagen_orig)
-                if resultados:
-                    return resultados[0].text
+                if frame.shape[0] > frame.shape[1]:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
+                # 1. Intentar leer código de barras 1D (Code 128, EAN, UPC, etc.)
+                if _detector_barras is not None:
+                    ok, decoded_info, _, _ = _detector_barras.detectAndDecodeMulti(frame)
+                    if ok and decoded_info:
+                        for texto in decoded_info:
+                            if texto and texto.strip():
+                                return texto.strip()
+
+                # 2. Intentar leer código QR
+                if _detector_qr is not None:
+                    texto_qr, _, _ = _detector_qr.detectAndDecode(frame)
+                    if texto_qr and texto_qr.strip():
+                        return texto_qr.strip()
             except Exception as ex:
                 print(f"Error leyendo frame: {ex}")
             return None
