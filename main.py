@@ -168,6 +168,28 @@ def main(page: ft.Page):
             rut_ingresado = normalizar_rut(txt_rut.value or "")
             clave_ingresada = (txt_clave.value or "").strip()
             resultado, dato = db.autenticar(rut_ingresado, clave_ingresada)
+
+            # Si no existe en SQLite local del móvil o figura inactivo, verificar contra Firebase
+            if resultado in ("credenciales", "inactivo") and cloud.configurado:
+                estado_nube = cloud.autenticar_solo_login(rut_ingresado, clave_ingresada)
+                if estado_nube == "ok":
+                    perfil = cloud.obtener_perfil_usuario(rut_ingresado)
+                    if perfil:
+                        usuario_local = db.sincronizar_usuario_nube(
+                            rut_ingresado,
+                            perfil["nombre"],
+                            perfil["correo"],
+                            clave_plana=clave_ingresada,
+                            rol=perfil["rol"],
+                            activo=perfil["activo"],
+                        )
+                        if perfil["activo"] and usuario_local:
+                            iniciar_app(usuario_local, clave_ingresada)
+                            return
+                        else:
+                            mostrar_alerta("Tu cuenta está pendiente de activación por el administrador.", True, 4500)
+                            return
+
             if resultado == "ok":
                 iniciar_app(dato, clave_ingresada)
             elif resultado == "bloqueado":
@@ -202,12 +224,22 @@ def main(page: ft.Page):
                 return
 
             ok, mensaje = db.registrar_usuario(rut, nombre, correo, id_b)
-            mostrar_alerta(mensaje, es_error=not ok, ms=5000)
-            if ok:
+            subido_nube = False
+            if cloud.configurado:
+                if cloud.autenticar_o_registrar(rut, id_b):
+                    subido_nube = cloud.guardar_perfil_usuario(rut, nombre, correo, rol="usuario", activo=False)
+                    cloud.id_token = None
+
+            if subido_nube:
+                mostrar_alerta("Solicitud enviada a la nube. El administrador ya puede verla y activarla.", False, 5000)
                 for campo in (reg_rut, reg_nombre, reg_correo, reg_id, reg_id2):
                     campo.value = ""
                 txt_rut.value = rut
                 ir_a(registro=False)
+            elif ok:
+                mostrar_alerta("Guardado solo en este teléfono (sin conexión a la nube). Revisa tu internet e inténtalo de nuevo.", True, 5000)
+            else:
+                mostrar_alerta(mensaje, True, 5000)
 
         def ir_a(registro):
             form_login.visible = not registro
@@ -354,6 +386,28 @@ def main(page: ft.Page):
                         mostrar_alerta("Sin conexión a Firebase. Los datos siguen a salvo en el teléfono.", True, 3000)
                     return
 
+                # 0. Sincronizar perfil del usuario actual en Firestore
+                cloud.guardar_perfil_usuario(
+                    rut_usuario, usuario["nombre"], usuario.get("correo"), usuario["rol"], usuario["activo"]
+                )
+
+                # Descargar tarifas vigentes desde la nube si existen
+                tarifas_nube = cloud.descargar_tarifas()
+                if tarifas_nube:
+                    tarifas["vigentes"] = tarifas_nube
+                    actualizar_vista_previa_monto()
+
+                # Si es admin, descargar solicitudes y usuarios desde Firestore
+                if es_admin:
+                    remotos_u = cloud.listar_todos_usuarios()
+                    for u_rem in remotos_u:
+                        if u_rem["rut"] != rut_usuario:
+                            db.sincronizar_usuario_nube(
+                                u_rem["rut"], u_rem["nombre"], u_rem["correo"],
+                                rol=u_rem["rol"], activo=u_rem["activo"]
+                            )
+                    renderizar_usuarios()
+
                 # 1. Si se eliminó un pedido localmente, borrarlo también en Firestore
                 if eliminar_sg:
                     cloud.eliminar_pedido_nube(rut_usuario, eliminar_sg)
@@ -366,7 +420,7 @@ def main(page: ft.Page):
                         db.marcar_sincronizado(p["id"])
                         subidos += 1
 
-                # 3. Descargar respaldo desde Firestore si se solicita (ej. al iniciar sesión o pulsar botón)
+                # 3. Descargar respaldo desde Firestore si se solicita
                 importados = 0
                 if descargar:
                     remotos = cloud.descargar_pedidos(rut_usuario)
@@ -668,7 +722,10 @@ def main(page: ft.Page):
             skus, arts = obtener_valores_numericos()
             monto = calcular_monto(rg_tipo.value, skus, arts)
             lbl_estimado.value = f"Ingreso estimado del pedido: $ {monto:,.0f}".replace(",", ".")
-            page.update()
+            try:
+                page.update()
+            except Exception:
+                pass
 
         def eliminar_registro(pedido_id, sg_valor):
             if not sesion_activa():
@@ -970,14 +1027,20 @@ def main(page: ft.Page):
                                  visible=es_admin, on_click=lambda e: alternar_panel_admin())
 
         def cambiar_estado_usuario(usuario_id, activar):
+            u_obj = db.obtener_usuario(usuario_id)
             if db.cambiar_estado(uid, usuario_id, activar):
+                if u_obj and cloud.id_token:
+                    cloud.guardar_perfil_usuario(u_obj["rut"], u_obj["nombre"], u_obj["correo"], u_obj["rol"], activar)
                 mostrar_alerta("Usuario activado." if activar else "Usuario desactivado.")
             else:
                 mostrar_alerta("No se pudo cambiar el estado.", True)
             renderizar_usuarios()
 
         def rechazar_usuario(usuario_id):
+            u_obj = db.obtener_usuario(usuario_id)
             if db.rechazar_usuario(uid, usuario_id):
+                if u_obj and cloud.id_token:
+                    cloud.eliminar_usuario_nube(u_obj["rut"])
                 mostrar_alerta("Solicitud rechazada.")
             else:
                 mostrar_alerta("Solo se pueden rechazar solicitudes sin pedidos.", True)
@@ -1037,7 +1100,10 @@ def main(page: ft.Page):
                 ft.Row([tabla], scroll=ft.ScrollMode.AUTO),
                 ft.Divider(height=10),
             ]
-            page.update()
+            try:
+                page.update()
+            except Exception:
+                pass
 
         def alternar_panel_admin():
             if not es_admin or not sesion_activa():
@@ -1076,6 +1142,8 @@ def main(page: ft.Page):
                 ok, mensaje = db.guardar_tarifas(uid, nuevas)
                 if ok:
                     tarifas["vigentes"] = db.obtener_tarifas()
+                    if cloud.id_token:
+                        cloud.subir_tarifas(tarifas["vigentes"])
                     actualizar_vista_previa_monto()
                 mostrar_alerta(mensaje, es_error=not ok)
 
