@@ -3,10 +3,12 @@ from datetime import datetime, timedelta
 import threading
 import platform
 try:
-    import cv2          # Solo disponibles en PC/laptop; en Android (APK) no existen
-    import zxingcpp
+    import cv2          # Solo disponible en PC/laptop; en Android (APK) no existe
 except ImportError:
     cv2 = None
+try:
+    import zxingcpp     # Disponible tanto en PC como en Android (APK)
+except ImportError:
     zxingcpp = None
 from calculator import calcular_ingreso
 from database import DatabaseManager
@@ -21,10 +23,8 @@ except ImportError:
     fc = None
     fph = None
 try:
-    from pyzbar.pyzbar import decode as zbar_decode   # lector de códigos para Android
     from PIL import Image
 except ImportError:
-    zbar_decode = None
     Image = None
 
 if platform.system() == "Windows":
@@ -184,6 +184,10 @@ def main(page: ft.Page):
                             activo=perfil["activo"],
                         )
                         if perfil["activo"] and usuario_local:
+                            try:
+                                page.client_storage.set("sesion_picking", {"rut": rut_ingresado, "clave": clave_ingresada})
+                            except Exception:
+                                pass
                             iniciar_app(usuario_local, clave_ingresada)
                             return
                         else:
@@ -191,6 +195,10 @@ def main(page: ft.Page):
                             return
 
             if resultado == "ok":
+                try:
+                    page.client_storage.set("sesion_picking", {"rut": rut_ingresado, "clave": clave_ingresada})
+                except Exception:
+                    pass
                 iniciar_app(dato, clave_ingresada)
             elif resultado == "bloqueado":
                 mostrar_alerta(f"Demasiados intentos. Intenta de nuevo en {dato} min.", True, 4000)
@@ -451,6 +459,10 @@ def main(page: ft.Page):
             cam_estado["cam"] = None
             cloud.id_token = None
             cloud.refresh_token = None
+            try:
+                page.client_storage.remove("sesion_picking")
+            except Exception:
+                pass
             mostrar_login(aviso)
 
         def sesion_activa():
@@ -590,26 +602,35 @@ def main(page: ft.Page):
             if codigo_encontrado:
                 procesar_texto_escaneado(codigo_encontrado)
 
-        # ---- Cámara del móvil ----
+        # ---- Cámara del móvil (visor horizontal por defecto + zxingcpp) ----
         cam_estado = {"cam": None, "activa": False, "procesando": False}
         panel_camara = ft.Container(
             visible=False,
-            height=300,
+            aspect_ratio=16 / 9,
+            width=float("inf"),
             bgcolor="black",
             border_radius=12,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            alignment=ft.Alignment(0, 0),
         )
 
         def _leer_codigo(jpeg_bytes):
-            if zbar_decode is None or Image is None:
+            if zxingcpp is None or Image is None:
                 return None
             try:
-                imagen = Image.open(io.BytesIO(jpeg_bytes))
-                resultados = zbar_decode(imagen)
+                imagen = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+                # Orientar el frame a horizontal por defecto si el sensor lo entrega vertical
+                if imagen.height > imagen.width:
+                    imagen = imagen.rotate(270, expand=True)
+                resultados = zxingcpp.read_barcodes(imagen)
+                if not resultados:
+                    # Respaldo: intentar en la orientación original sin rotar
+                    imagen_orig = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+                    resultados = zxingcpp.read_barcodes(imagen_orig)
                 if resultados:
-                    return resultados[0].data.decode("utf-8", errors="ignore")
-            except Exception:
-                pass
+                    return resultados[0].text
+            except Exception as ex:
+                print(f"Error leyendo frame: {ex}")
             return None
 
         async def cerrar_camara_movil():
@@ -1298,7 +1319,22 @@ def main(page: ft.Page):
             renderizar_usuarios()
         ajustar_ancho()
 
-    mostrar_login()
+    sesion_guardada = None
+    try:
+        sesion_guardada = page.client_storage.get("sesion_picking")
+    except Exception:
+        sesion_guardada = None
+
+    if isinstance(sesion_guardada, dict) and sesion_guardada.get("rut") and sesion_guardada.get("clave"):
+        rut_s = normalizar_rut(sesion_guardada["rut"])
+        clave_s = str(sesion_guardada["clave"]).strip()
+        res_s, dato_s = db.autenticar(rut_s, clave_s)
+        if res_s == "ok":
+            iniciar_app(dato_s, clave_s)
+        else:
+            mostrar_login()
+    else:
+        mostrar_login()
 
 
 if __name__ == "__main__":
