@@ -36,8 +36,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet[all]==1.1.2" requests pillow
 
-      - name: Compilar APK
-        run: flet build apk --yes --verbose
+      - name: Restaurar keystore de firma
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > picking-release.keystore
+
+      - name: Compilar APK firmada
+        run: >
+          flet build apk --yes --verbose
+          --android-signing-key-store picking-release.keystore
+          --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}"
+          --android-signing-key-password "${{ secrets.KEYSTORE_PASSWORD }}"
+          --android-signing-key-alias "${{ secrets.KEY_ALIAS }}"
 
       - name: Subir APK generado como Artifact
         uses: actions/upload-artifact@v4
