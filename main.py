@@ -12,9 +12,11 @@ try:
     import zxingcpp     # Opcional en PC/laptop
 except ImportError:
     zxingcpp = None
+import os
 from calculator import calcular_ingreso
 from database import DatabaseManager
 from firebase_sync import FirebaseCloudSync
+from pdf_report import generar_pdf_consulta
 from seguridad import normalizar_rut, validar_rut, validar_id_boosmap
 import asyncio
 import io
@@ -186,10 +188,7 @@ def main(page: ft.Page):
                             activo=perfil["activo"],
                         )
                         if perfil["activo"] and usuario_local:
-                            try:
-                                page.client_storage.set("sesion_picking", {"rut": rut_ingresado, "clave": clave_ingresada})
-                            except Exception:
-                                pass
+                            db.guardar_sesion_local(rut_ingresado, clave_ingresada)
                             iniciar_app(usuario_local, clave_ingresada)
                             return
                         else:
@@ -197,10 +196,7 @@ def main(page: ft.Page):
                             return
 
             if resultado == "ok":
-                try:
-                    page.client_storage.set("sesion_picking", {"rut": rut_ingresado, "clave": clave_ingresada})
-                except Exception:
-                    pass
+                db.guardar_sesion_local(rut_ingresado, clave_ingresada)
                 iniciar_app(dato, clave_ingresada)
             elif resultado == "bloqueado":
                 mostrar_alerta(f"Demasiados intentos. Intenta de nuevo en {dato} min.", True, 4000)
@@ -344,7 +340,7 @@ def main(page: ft.Page):
         fecha_actual = datetime.now().strftime("%Y-%m-%d")
         primer_dia_mes = datetime.now().replace(day=1).strftime("%Y-%m-%d")
 
-        estado = {"rango": None, "mostrar": False, "sincronizando": False}
+        estado = {"rango": None, "mostrar": True, "sincronizando": False, "vista": "inicio", "registros": [], "periodo_texto": ""}
         tarifas = {"vigentes": db.obtener_tarifas()}
 
         # ---- Botón / Indicador de estado de Firebase ----
@@ -461,10 +457,7 @@ def main(page: ft.Page):
             cam_estado["cam"] = None
             cloud.id_token = None
             cloud.refresh_token = None
-            try:
-                page.client_storage.remove("sesion_picking")
-            except Exception:
-                pass
+            db.borrar_sesion_local()
             mostrar_login(aviso)
 
         def sesion_activa():
@@ -934,9 +927,9 @@ def main(page: ft.Page):
                     ])
                 )
 
-            if not estado["mostrar"]:
+            if estado["vista"] == "consultas" and not estado["mostrar"]:
                 lista_pedidos_container.controls.append(
-                    ft.Text("El historial se muestra al consultarlo: usa «VER PEDIDOS DEL DÍA» o «CONSULTAR RANGO».",
+                    ft.Text("Selecciona un filtro o rango y pulsa «CONSULTAR RANGO» o «VER PEDIDOS DEL DÍA».",
                             size=13, color="#666666")
                 )
             elif filas:
@@ -956,11 +949,16 @@ def main(page: ft.Page):
                 )
                 lista_pedidos_container.controls.append(ft.Row([tabla], scroll=ft.ScrollMode.AUTO))
             else:
+                msg_vacio = (
+                    "No hay pedidos registrados para esta fecha."
+                    if estado["vista"] == "inicio"
+                    else "No hay pedidos registrados en este período."
+                )
                 lista_pedidos_container.controls.append(
-                    ft.Text("No hay pedidos registrados en este período.", color="#666666")
+                    ft.Text(msg_vacio, color="#666666")
                 )
 
-            if estado["mostrar"]:
+            if estado["vista"] == "inicio" or estado["mostrar"]:
                 lbl_total_dia.value = fmt_moneda(total_dinero)
                 lbl_conteo_dia.value = f"{len(registros)} pedido(s) registrado(s)"
             else:
@@ -971,21 +969,33 @@ def main(page: ft.Page):
         def actualizar_vista_diaria():
             if not sesion_activa():
                 return
-            if estado["rango"]:
+            if estado["vista"] == "consultas" and estado["rango"]:
                 desde, hasta = estado["rango"]
                 registros = db.obtener_pedidos_por_rango(desde, hasta, uid)
                 lbl_titulo_total.value = "INGRESO TOTAL DEL RANGO"
                 lbl_titulo_lista.value = f"Pedidos del {desde} al {hasta}"
+                lbl_titulo_lista.visible = estado["mostrar"]
+                estado["periodo_texto"] = f"Del {desde} al {hasta}"
+            elif estado["vista"] == "consultas":
+                fecha_sel = txt_fecha.value.strip()
+                registros = db.obtener_pedidos_por_rango(fecha_sel, fecha_sel, uid)
+                lbl_titulo_total.value = "INGRESO TOTAL DEL DÍA"
+                lbl_titulo_lista.value = f"Pedidos del Día ({fecha_sel})"
+                lbl_titulo_lista.visible = estado["mostrar"]
+                estado["periodo_texto"] = f"Día {fecha_sel}"
             else:
                 fecha_sel = txt_fecha.value.strip()
                 registros = db.obtener_pedidos_por_rango(fecha_sel, fecha_sel, uid)
                 lbl_titulo_total.value = "INGRESO TOTAL DEL DÍA"
-                lbl_titulo_lista.value = "Pedidos del Día Seleccionado"
-            lbl_titulo_lista.visible = estado["mostrar"]
+                lbl_titulo_lista.value = f"Pedidos Tratados el Día ({fecha_sel})"
+                lbl_titulo_lista.visible = True
+                estado["periodo_texto"] = f"Día {fecha_sel}"
+            estado["registros"] = registros if estado["mostrar"] else []
             renderizar_tabla(registros)
 
         def volver_a_dia(e=None):
             estado["rango"] = None
+            estado["mostrar"] = True
             actualizar_vista_diaria()
 
         def ver_pedidos_del_dia(e=None):
@@ -1057,10 +1067,12 @@ def main(page: ft.Page):
 
         panel_admin = ft.Column(visible=False, spacing=10)
         panel_tarifas = ft.Column(visible=False, spacing=10)
-        btn_tarifas = ft.Button(content="💲 TARIFAS", bgcolor="#8e24aa", color="white", height=40,
-                                visible=es_admin, on_click=lambda e: alternar_panel_tarifas())
-        btn_usuarios = ft.Button(content="👥 USUARIOS", bgcolor="#5c6bc0", color="white", height=40,
+        btn_usuarios = ft.Button(content="👥 Usuarios", bgcolor="#5c6bc0", color="white", height=40,
                                  visible=es_admin, on_click=lambda e: alternar_panel_admin())
+        btn_tarifas = ft.Button(content="⚙️ Gestión", bgcolor="#8e24aa", color="white", height=40,
+                                visible=es_admin, on_click=lambda e: alternar_panel_tarifas())
+        btn_consultas = ft.Button(content="🔍 Consultas", bgcolor="#00897b", color="white", height=40,
+                                  on_click=lambda e: ir_a_consultas())
 
         def cambiar_estado_usuario(usuario_id, activar):
             u_obj = db.obtener_usuario(usuario_id)
@@ -1085,7 +1097,7 @@ def main(page: ft.Page):
         def renderizar_usuarios():
             usuarios = db.listar_usuarios(uid)
             pendientes = sum(1 for u in usuarios if not u["activo"])
-            btn_usuarios.content = f"👥 USUARIOS ({pendientes} pendiente(s))" if pendientes else "👥 USUARIOS"
+            btn_usuarios.content = f"👥 Usuarios ({pendientes})" if pendientes else "👥 Usuarios"
 
             filas = []
             for u in usuarios:
@@ -1246,6 +1258,56 @@ def main(page: ft.Page):
 
             mostrar_alerta("Pedido registrado correctamente.")
 
+        def ir_a_consultas():
+            if not sesion_activa():
+                return
+            panel_admin.visible = False
+            panel_tarifas.visible = False
+            estado["vista"] = "consultas"
+            estado["rango"] = None
+            estado["mostrar"] = False
+            seccion_registro.visible = False
+            seccion_consultas.visible = True
+            actualizar_vista_diaria()
+
+        def ir_a_menu():
+            if not sesion_activa():
+                return
+            estado["vista"] = "inicio"
+            estado["rango"] = None
+            estado["mostrar"] = True
+            seccion_consultas.visible = False
+            seccion_registro.visible = True
+            actualizar_vista_diaria()
+
+        def exportar_pdf_consulta(e=None):
+            if not sesion_activa():
+                return
+            if not estado["mostrar"] or not estado["registros"]:
+                mostrar_alerta("Primero realiza una consulta con pedidos para generar el PDF.", es_error=True, ms=3000)
+                return
+            try:
+                ruta_pdf = generar_pdf_consulta(
+                    estado["registros"],
+                    usuario,
+                    estado["periodo_texto"],
+                    tarifas["vigentes"],
+                )
+                if ruta_pdf:
+                    mostrar_alerta(f"PDF guardado en: {ruta_pdf}", es_error=False, ms=4500)
+                    if platform.system() == "Windows":
+                        try:
+                            os.startfile(ruta_pdf)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            page.launch_url(f"file://{ruta_pdf}")
+                        except Exception:
+                            pass
+            except Exception as ex:
+                mostrar_alerta(f"No se pudo generar el PDF: {ex}", es_error=True, ms=4000)
+
         encabezado = ft.Row(
             [
                 ft.Text(f"👤 {usuario['nombre']}" + ("  (Administrador)" if es_admin else ""),
@@ -1255,6 +1317,7 @@ def main(page: ft.Page):
                         btn_sync,
                         btn_usuarios,
                         btn_tarifas,
+                        btn_consultas,
                         ft.Button(content="Cerrar sesión", bgcolor="#757575", color="white", height=40,
                                   on_click=lambda e: cerrar_sesion()),
                     ],
@@ -1277,52 +1340,82 @@ def main(page: ft.Page):
             ])
         )
 
+        seccion_registro = ft.Column(
+            [
+                ft.Text("Registrar Nuevo Pedido", size=18, weight=ft.FontWeight.BOLD),
+                txt_fecha,
+                btn_escanear,
+                panel_camara,
+                txt_sg,
+                ft.Text("Modalidad de Preparación:", size=14, weight=ft.FontWeight.W_500),
+                rg_tipo,
+                ft.Row([txt_skus, txt_articulos], spacing=10),
+                lbl_estimado,
+                ft.Button(
+                    content="GUARDAR PEDIDO",
+                    bgcolor="#303f9f",
+                    color="white",
+                    height=48,
+                    width=float("inf"),
+                    on_click=guardar_pedido
+                ),
+            ],
+            visible=True,
+            spacing=10
+        )
+
+        seccion_consultas = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text("Consultar histórico", size=18, weight=ft.FontWeight.BOLD),
+                        ft.Button(
+                            content="⬅️ Ir a Menú",
+                            bgcolor="#1a237e",
+                            color="white",
+                            height=40,
+                            on_click=lambda e: ir_a_menu()
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True
+                ),
+                ft.Text("«Ver pedidos del día» usa la fecha del campo Fecha principal; para otro período elige un rango.",
+                        size=13, color="#666666"),
+                ft.Row(
+                    [txt_desde, boton_calendario(txt_desde), txt_hasta, boton_calendario(txt_hasta)],
+                    wrap=True,
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER
+                ),
+                ft.Row(
+                    [
+                        boton_rango("🔍 CONSULTAR RANGO", "#303f9f", consultar_rango),
+                        boton_rango("Esta semana", "#5c6bc0", lambda e: rango_rapido("semana")),
+                        boton_rango("Este mes", "#5c6bc0", lambda e: rango_rapido("mes")),
+                        boton_rango("Mes anterior", "#5c6bc0", lambda e: rango_rapido("anterior")),
+                        boton_rango("📋 VER PEDIDOS DEL DÍA", "#00897b", ver_pedidos_del_dia),
+                        boton_rango("📄 GENERAR PDF", "#e65100", exportar_pdf_consulta),
+                        boton_rango("🧹 BORRAR CONSULTA", "#c62828", borrar_consulta),
+                    ],
+                    wrap=True,
+                    spacing=10
+                ),
+            ],
+            visible=False,
+            spacing=10
+        )
+
         page.add(
             encabezado,
             panel_admin,
             panel_tarifas,
             tarjeta_resumen,
             ft.Divider(height=10, color="transparent"),
-            ft.Text("Registrar Nuevo Pedido", size=18, weight=ft.FontWeight.BOLD),
-            txt_fecha,
-            btn_escanear,
-            panel_camara,
-            txt_sg,
-            ft.Text("Modalidad de Preparación:", size=14, weight=ft.FontWeight.W_500),
-            rg_tipo,
-            ft.Row([txt_skus, txt_articulos], spacing=10),
-            lbl_estimado,
-            ft.Button(
-                content="GUARDAR PEDIDO",
-                bgcolor="#303f9f",
-                color="white",
-                height=48,
-                width=float("inf"),
-                on_click=guardar_pedido
-            ),
-            ft.Divider(height=20),
-            ft.Text("Consultar histórico", size=18, weight=ft.FontWeight.BOLD),
-            ft.Text("«Ver pedidos del día» usa la fecha del campo Fecha de arriba; para otro período elige un rango.",
-                    size=13, color="#666666"),
-            ft.Row(
-                [txt_desde, boton_calendario(txt_desde), txt_hasta, boton_calendario(txt_hasta)],
-                wrap=True,
-                spacing=10,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER
-            ),
-            ft.Row(
-                [
-                    boton_rango("🔍 CONSULTAR RANGO", "#303f9f", consultar_rango),
-                    boton_rango("Esta semana", "#5c6bc0", lambda e: rango_rapido("semana")),
-                    boton_rango("Este mes", "#5c6bc0", lambda e: rango_rapido("mes")),
-                    boton_rango("Mes anterior", "#5c6bc0", lambda e: rango_rapido("anterior")),
-                    boton_rango("📋 VER PEDIDOS DEL DÍA", "#00897b", ver_pedidos_del_dia),
-                    boton_rango("🧹 BORRAR CONSULTA", "#c62828", borrar_consulta),
-                ],
-                wrap=True,
-                spacing=10
-            ),
-            ft.Divider(height=20),
+            seccion_registro,
+            seccion_consultas,
+            ft.Divider(height=16),
             lbl_titulo_lista,
             lista_pedidos_container
         )
@@ -1334,19 +1427,15 @@ def main(page: ft.Page):
             renderizar_usuarios()
         ajustar_ancho()
 
-    sesion_guardada = None
-    try:
-        sesion_guardada = page.client_storage.get("sesion_picking")
-    except Exception:
-        sesion_guardada = None
-
-    if isinstance(sesion_guardada, dict) and sesion_guardada.get("rut") and sesion_guardada.get("clave"):
+    sesion_guardada = db.obtener_sesion_local()
+    if sesion_guardada and sesion_guardada.get("rut") and sesion_guardada.get("clave"):
         rut_s = normalizar_rut(sesion_guardada["rut"])
         clave_s = str(sesion_guardada["clave"]).strip()
         res_s, dato_s = db.autenticar(rut_s, clave_s)
         if res_s == "ok":
             iniciar_app(dato_s, clave_s)
         else:
+            db.borrar_sesion_local()
             mostrar_login()
     else:
         mostrar_login()

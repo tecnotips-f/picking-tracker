@@ -104,6 +104,13 @@ class DatabaseManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_usuario_fecha ON pedidos(usuario_id, fecha)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_usuario_sg ON pedidos(usuario_id, sg)")
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS sesion_local (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    rut TEXT NOT NULL,
+                    clave TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS tarifas (
                     tipo TEXT PRIMARY KEY,
                     base REAL NOT NULL,
@@ -445,3 +452,30 @@ class DatabaseManager:
                     importados += 1
             conn.commit()
         return importados
+
+    # ---------------------------------------------------- sesión persistente local
+    def guardar_sesion_local(self, rut, clave):
+        """Guarda las credenciales activas en SQLite local para mantener la sesión abierta en Android."""
+        rut = normalizar_rut(rut)
+        if not rut or not clave:
+            return
+        with self.conectar() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sesion_local (id, rut, clave) VALUES (1, ?, ?)",
+                (rut, str(clave).strip())
+            )
+            conn.commit()
+
+    def obtener_sesion_local(self):
+        """Recupera la sesión persistente guardada en SQLite local (o None si se cerró sesión)."""
+        with self.conectar() as conn:
+            fila = conn.execute("SELECT rut, clave FROM sesion_local WHERE id = 1").fetchone()
+            if fila:
+                return {"rut": fila[0], "clave": fila[1]}
+            return None
+
+    def borrar_sesion_local(self):
+        """Elimina la sesión persistente al cerrar sesión manualmente o al desactivar la cuenta."""
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM sesion_local WHERE id = 1")
+            conn.commit()
