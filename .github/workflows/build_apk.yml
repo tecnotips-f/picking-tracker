@@ -38,13 +38,13 @@ jobs:
 
       - name: Restaurar y verificar keystore de firma
         run: |
-          printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > picking-release.keystore
-          keytool -list -keystore picking-release.keystore -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
+          printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/picking-release.keystore"
+          keytool -list -keystore "$GITHUB_WORKSPACE/picking-release.keystore" -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
       - name: Compilar APK firmada
         run: |
           flet build apk --yes --verbose \
-            --android-signing-key-store picking-release.keystore \
+            --android-signing-key-store "$GITHUB_WORKSPACE/picking-release.keystore" \
             --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}" \
             --android-signing-key-password "${{ secrets.KEYSTORE_PASSWORD }}" \
             --android-signing-key-alias "${{ secrets.KEY_ALIAS }}"
