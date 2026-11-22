@@ -41,17 +41,47 @@ jobs:
           printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/picking-release.keystore"
           keytool -list -keystore "$GITHUB_WORKSPACE/picking-release.keystore" -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
+      - name: Opciones disponibles de flet build (informativo)
+        run: |
+          flet build apk --help 2>&1 | grep -i -E -- "--arch|target|split|build-number" || true
+
       - name: Compilar APK firmada
         run: |
-          flet build apk --yes --verbose \
-            --android-signing-key-store "$GITHUB_WORKSPACE/picking-release.keystore" \
-            --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}" \
-            --android-signing-key-password "${{ secrets.KEYSTORE_PASSWORD }}" \
-            --android-signing-key-alias "${{ secrets.KEY_ALIAS }}"
+          # Solo arm64 (los moviles actuales): evita descargar y empaquetar 2 arquitecturas de mas.
+          ARCH_FLAG=""
+          if flet build apk --help 2>&1 | grep -q -- "--arch"; then
+            ARCH_FLAG="--arch arm64-v8a"
+          fi
+          echo "Opcion de arquitectura: [$ARCH_FLAG]"
+          # Hasta 3 intentos: la descarga de la distribucion de Python a veces falla por red.
+          for intento in 1 2 3; do
+            if flet build apk --yes --verbose $ARCH_FLAG \
+              --build-number 6 \
+              --split-per-abi \
+              --cleanup-app --cleanup-packages \
+              --compile-app --compile-packages \
+              --android-signing-key-store "$GITHUB_WORKSPACE/picking-release.keystore" \
+              --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}" \
+              --android-signing-key-password "${{ secrets.KEYSTORE_PASSWORD }}" \
+              --android-signing-key-alias "${{ secrets.KEY_ALIAS }}"; then
+              exit 0
+            fi
+            echo "Intento $intento fallido"
+            [ "$intento" -eq 3 ] && exit 1
+            sleep 20
+          done
+
+      - name: Reporte de tamano del APK
+        run: |
+          ls -lh build/apk/*.apk
+          for f in build/apk/*.apk; do
+            echo "=== $f: archivos mas pesados ==="
+            unzip -l "$f" | sort -k1 -n -r | head -25
+          done
 
       - name: Subir APK generado como Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: picking-tracker-apk
+          name: picking-tracker-apk-por-arquitectura
           path: build/apk/*.apk
           if-no-files-found: error
