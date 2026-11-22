@@ -3,11 +3,18 @@ from datetime import datetime, timedelta
 import threading
 import platform
 try:
-    import cv2          # Disponible en PC y en Android (opencv-python-headless)
-    import numpy as np
+    import cv2          # Solo en PC/laptop (webcam). El APK ya no lo incluye: pesa mucho.
 except ImportError:
     cv2 = None
+try:
+    import numpy as np
+except ImportError:
     np = None
+try:
+    from PIL import Image     # Decodifica los fotogramas JPEG de la camara en el movil
+except ImportError:
+    Image = None
+import io
 try:
     import zxingcpp     # Opcional en PC/laptop
 except ImportError:
@@ -638,24 +645,28 @@ def main(page: ft.Page):
         _detector_qr = cv2.QRCodeDetector() if cv2 is not None else None
 
         def _leer_codigo(jpeg_bytes):
-            if cv2 is None or np is None:
+            if np is None:
                 return None
             try:
-                arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if cv2 is not None:
+                    frame = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                elif Image is not None:
+                    frame = np.asarray(Image.open(io.BytesIO(jpeg_bytes)).convert("RGB"))
+                else:
+                    return None
                 if frame is None:
                     return None
                 # Orientar el frame a horizontal por defecto si el sensor lo entrega vertical
                 if frame.shape[0] > frame.shape[1]:
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                    frame = np.rot90(frame, -1)
 
                 # 1. Codigo de barras (zxing-cpp si existe; si no, decodificador propio de Code 128).
                 #    Se descarta el detector EAN/UPC de OpenCV: no lee Code 128 y entregaba numeros falsos.
-                texto = _decodificar_frame(frame)
+                texto = _decodificar_frame(np.ascontiguousarray(frame))
                 if texto:
                     return texto
 
-                # 2. Intentar leer código QR
+                # 2. Codigo QR (solo si OpenCV esta disponible, es decir, en PC)
                 if _detector_qr is not None:
                     texto_qr, _, _ = _detector_qr.detectAndDecode(frame)
                     if texto_qr and texto_qr.strip():
