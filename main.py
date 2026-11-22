@@ -13,6 +13,7 @@ try:
 except ImportError:
     zxingcpp = None
 import os
+import re
 from calculator import calcular_ingreso
 from database import DatabaseManager
 from firebase_sync import FirebaseCloudSync
@@ -476,7 +477,8 @@ def main(page: ft.Page):
         txt_sg = ft.TextField(
             label="Número de SG",
             hint_text="Escanee o ingrese el SG...",
-            keyboard_type=ft.KeyboardType.NUMBER
+            keyboard_type=ft.KeyboardType.NUMBER,
+            on_submit=lambda e: procesar_texto_escaneado(txt_sg.value)
         )
 
         rg_tipo = ft.RadioGroup(
@@ -513,35 +515,45 @@ def main(page: ft.Page):
         lbl_titulo_lista = ft.Text("Pedidos del Día Seleccionado", size=18, weight=ft.FontWeight.BOLD, visible=False)
         lista_pedidos_container = ft.Column(spacing=10)
 
-        def procesar_texto_escaneado(texto_crudo):
-            datos = texto_crudo.strip()
-            sg_encontrado = datos
-            skus_detectados = None
-            arts_detectados = None
+        def _limpiar_campos_pedido():
+            txt_sg.value = ""
+            txt_skus.value = ""
+            txt_articulos.value = ""
+            actualizar_vista_previa_monto()
 
-            if "|" in datos:
-                partes = datos.split("|")
-                sg_encontrado = partes[0].strip()
-                if len(partes) > 1 and partes[1].strip().isdigit():
-                    skus_detectados = int(partes[1].strip())
-                if len(partes) > 2 and partes[2].strip().isdigit():
-                    arts_detectados = int(partes[2].strip())
+        def procesar_texto_escaneado(texto_crudo):
+            """Espera 'SG|SKUs|Cantidad' y reparte cada dato en su campo."""
+            datos = (texto_crudo or "").strip()
+            # Separadores aceptados: | ; tabulador (algunos lectores cambian el simbolo segun el teclado)
+            partes = [p.strip() for p in re.split(r"[|;\t]", datos)]
+            sg_encontrado = partes[0]
+            # Completo (SG|SKUs|Cant, numericos): coloca cada dato en su campo.
+            # Sin separador o incompleto: solo el SG, y SKUs y cantidad quedan en 0.
+            skus_detectados = 0
+            arts_detectados = 0
+            if len(partes) == 3 and partes[1].isdigit() and partes[2].isdigit():
+                skus_detectados = int(partes[1])
+                arts_detectados = int(partes[2])
+
+            if not sg_encontrado:
+                senal(False)
+                _limpiar_campos_pedido()
+                return
 
             if db.verificar_sg_existente(sg_encontrado, uid):
                 mostrar_alerta(f"⚠️ El SG '{sg_encontrado}' ya existe en la base de datos.", es_error=True)
                 senal(False)
+                _limpiar_campos_pedido()
                 return
 
             senal(True)
 
             txt_sg.value = sg_encontrado
-            if skus_detectados is not None:
-                txt_skus.value = str(skus_detectados)
-            if arts_detectados is not None:
-                txt_articulos.value = str(arts_detectados)
+            txt_skus.value = str(skus_detectados)
+            txt_articulos.value = str(arts_detectados)
 
             actualizar_vista_previa_monto()
-            mostrar_alerta(f"¡Código leído con éxito: {txt_sg.value}!")
+            mostrar_alerta(f"¡Leído! SG {sg_encontrado} | SKUs {txt_skus.value or '-'} | Cant. {txt_articulos.value or '-'}")
 
         camara_activa = threading.Event()
         hilo_cam = {"t": None}
@@ -624,7 +636,13 @@ def main(page: ft.Page):
                 if frame.shape[0] > frame.shape[1]:
                     frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
 
-                # 1. Intentar leer código de barras 1D (Code 128, EAN, UPC, etc.)
+                # 0. zxing-cpp lee Code 128 (el detector de OpenCV solo lee EAN/UPC)
+                if zxingcpp is not None:
+                    res = zxingcpp.read_barcodes(frame)
+                    if res and res[0].text.strip():
+                        return res[0].text.strip()
+
+                # 1. Intentar leer código de barras 1D (EAN, UPC)
                 if _detector_barras is not None:
                     ok, decoded_info, _, _ = _detector_barras.detectAndDecodeMulti(frame)
                     if ok and decoded_info:
@@ -1220,6 +1238,8 @@ def main(page: ft.Page):
             if not sesion_activa():
                 return
             fecha_val = txt_fecha.value.strip()
+            if re.search(r"[|;\t]", txt_sg.value or ""):
+                procesar_texto_escaneado(txt_sg.value)
             sg_val = txt_sg.value.strip()
             skus, arts = obtener_valores_numericos()
 
