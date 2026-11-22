@@ -12,6 +12,27 @@ try:
     import zxingcpp     # Opcional en PC/laptop
 except ImportError:
     zxingcpp = None
+try:
+    from code128 import decodificar_code128     # Decodificador propio (sirve en el APK)
+except ImportError:
+    decodificar_code128 = None
+
+
+def _decodificar_frame(frame):
+    """Lee un codigo de barras de un fotograma. Devuelve el texto exacto o None.
+
+    Usa zxing-cpp si esta disponible (laptop); si no (APK), el decodificador propio
+    de Code 128, que solo entrega texto con checksum valido. Nunca devuelve lecturas
+    aproximadas.
+    """
+    if zxingcpp is not None:
+        res = zxingcpp.read_barcodes(frame)
+        if res and res[0].text.strip():
+            return res[0].text.strip()
+        return None
+    if decodificar_code128 is not None:
+        return decodificar_code128(frame)
+    return None
 import os
 import re
 from calculator import calcular_ingreso
@@ -20,18 +41,12 @@ from firebase_sync import FirebaseCloudSync
 from pdf_report import generar_pdf_consulta
 from seguridad import normalizar_rut, validar_rut, validar_id_boosmap
 import asyncio
-import io
 try:
     import flet_camera as fc                      # cámara del móvil
     import flet_permission_handler as fph         # permiso de cámara en Android
 except ImportError:
     fc = None
     fph = None
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
-
 if platform.system() == "Windows":
     import winsound
 
@@ -579,9 +594,8 @@ def main(page: ft.Page):
                     if not ret or frame is None:
                         break
 
-                    resultados = zxingcpp.read_barcodes(frame)
-                    if resultados:
-                        codigo_encontrado = resultados[0].text
+                    codigo_encontrado = _decodificar_frame(frame)
+                    if codigo_encontrado:
                         break
 
                     cv2.imshow(ventana_nombre, frame)
@@ -621,7 +635,6 @@ def main(page: ft.Page):
             alignment=ft.Alignment(0, 0),
         )
 
-        _detector_barras = cv2.barcode.BarcodeDetector() if cv2 is not None else None
         _detector_qr = cv2.QRCodeDetector() if cv2 is not None else None
 
         def _leer_codigo(jpeg_bytes):
@@ -636,19 +649,11 @@ def main(page: ft.Page):
                 if frame.shape[0] > frame.shape[1]:
                     frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
 
-                # 0. zxing-cpp lee Code 128 (el detector de OpenCV solo lee EAN/UPC)
-                if zxingcpp is not None:
-                    res = zxingcpp.read_barcodes(frame)
-                    if res and res[0].text.strip():
-                        return res[0].text.strip()
-
-                # 1. Intentar leer código de barras 1D (EAN, UPC)
-                if _detector_barras is not None:
-                    ok, decoded_info, _, _ = _detector_barras.detectAndDecodeMulti(frame)
-                    if ok and decoded_info:
-                        for texto in decoded_info:
-                            if texto and texto.strip():
-                                return texto.strip()
+                # 1. Codigo de barras (zxing-cpp si existe; si no, decodificador propio de Code 128).
+                #    Se descarta el detector EAN/UPC de OpenCV: no lee Code 128 y entregaba numeros falsos.
+                texto = _decodificar_frame(frame)
+                if texto:
+                    return texto
 
                 # 2. Intentar leer código QR
                 if _detector_qr is not None:
@@ -734,7 +739,7 @@ def main(page: ft.Page):
             if page.web:
                 mostrar_alerta("En el navegador el escaneo con cámara no está disponible. Ingresa el SG manualmente.", es_error=True)
                 return
-            if cv2 is None or zxingcpp is None:
+            if cv2 is None or (zxingcpp is None and decodificar_code128 is None):
                 mostrar_alerta("El escaneo con cámara no está disponible en este dispositivo. Ingresa el SG manualmente.", es_error=True, ms=3000)
                 return
             if camara_activa.is_set():
