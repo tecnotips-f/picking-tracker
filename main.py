@@ -40,6 +40,8 @@ def _decodificar_frame(frame):
     if decodificar_code128 is not None:
         return decodificar_code128(frame)
     return None
+
+
 import os
 import re
 from calculator import calcular_ingreso
@@ -91,8 +93,8 @@ def main(page: ft.Page):
             except Exception:
                 pass
 
-    def mostrar_alerta(mensaje, es_error=False, ms=2000):
-        """Muestra notificaciones visuales (se ocultan solas; 2 segundos por defecto)"""
+    def mostrar_alerta(mensaje, es_error=False, ms=2500):
+        """Muestra notificaciones visuales (se ocultan solas; 2.5 segundos por defecto)"""
         snack = ft.SnackBar(
             content=ft.Text(mensaje, color="white", weight=ft.FontWeight.BOLD),
             bgcolor="red" if es_error else "green",
@@ -124,6 +126,7 @@ def main(page: ft.Page):
     # =====================================================================
     def mostrar_login(aviso=None):
         page.clean()
+        page.overlay.clear()
         ancho_campo = 320
 
         txt_rut = ft.TextField(
@@ -355,6 +358,7 @@ def main(page: ft.Page):
     # =====================================================================
     def iniciar_app(usuario, clave_sesion=""):
         page.clean()
+        page.overlay.clear()
         page.bgcolor = None
         uid = usuario["id"]
         rut_usuario = usuario["rut"]
@@ -478,6 +482,8 @@ def main(page: ft.Page):
             camara_activa.clear()
             cam_estado["activa"] = False
             cam_estado["cam"] = None
+            cam_estado["token"] += 1
+            overlay_camara.visible = False
             cloud.id_token = None
             cloud.refresh_token = None
             db.borrar_sesion_local()
@@ -547,8 +553,9 @@ def main(page: ft.Page):
             """Espera 'SG|SKUs|Cantidad' y reparte cada dato en su campo."""
             datos = (texto_crudo or "").strip()
             # Separadores aceptados: | ; tabulador (algunos lectores cambian el simbolo segun el teclado)
-            partes = [p.strip() for p in re.split(r"[|;\t]", datos)]
+            partes = [p.strip() for p in re.split(r"[|;	]", datos)]
             sg_encontrado = partes[0]
+
             # Completo (SG|SKUs|Cant, numericos): coloca cada dato en su campo.
             # Sin separador o incompleto: solo el SG, y SKUs y cantidad quedan en 0.
             skus_detectados = 0
@@ -560,10 +567,11 @@ def main(page: ft.Page):
             if not sg_encontrado:
                 senal(False)
                 _limpiar_campos_pedido()
+                mostrar_alerta("No se pudo leer un código válido.", es_error=True, ms=3000)
                 return
 
             if db.verificar_sg_existente(sg_encontrado, uid):
-                mostrar_alerta(f"⚠️ El SG '{sg_encontrado}' ya existe en la base de datos.", es_error=True)
+                mostrar_alerta(f"⚠️ El SG '{sg_encontrado}' ya existe en la base de datos.", es_error=True, ms=3500)
                 senal(False)
                 _limpiar_campos_pedido()
                 return
@@ -575,7 +583,13 @@ def main(page: ft.Page):
             txt_articulos.value = str(arts_detectados)
 
             actualizar_vista_previa_monto()
-            mostrar_alerta(f"¡Leído! SG {sg_encontrado} | SKUs {txt_skus.value or '-'} | Cant. {txt_articulos.value or '-'}")
+            mostrar_alerta(f"¡Leído! SG {sg_encontrado} | SKUs {txt_skus.value} | Cant. {txt_articulos.value}")
+            try:
+                txt_sg.focus()
+            except Exception:
+                pass
+
+        TIEMPO_MAX_ESCANEO = 4  # Segundos máximos antes de cerrar por fallo de lectura
 
         camara_activa = threading.Event()
         hilo_cam = {"t": None}
@@ -588,17 +602,24 @@ def main(page: ft.Page):
         def escanear_con_webcam_pc():
             cap = None
             codigo_encontrado = None
+            error_camara = None
             try:
                 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) if platform.system() == "Windows" else cv2.VideoCapture(0)
                 if not cap.isOpened():
-                    mostrar_alerta("No se pudo abrir la cámara.", es_error=True)
+                    error_camara = "No se pudo abrir la cámara."
                     return
 
                 ventana_nombre = "Escaner - Enfoque el codigo (ESC para salir)"
+                inicio = datetime.now()
 
                 while camara_activa.is_set():
+                    if (datetime.now() - inicio).total_seconds() >= TIEMPO_MAX_ESCANEO:
+                        error_camara = "No se detectó ningún código de barras o QR."
+                        break
+
                     ret, frame = cap.read()
                     if not ret or frame is None:
+                        error_camara = "Error al capturar imagen de la cámara."
                         break
 
                     codigo_encontrado = _decodificar_frame(frame)
@@ -606,13 +627,12 @@ def main(page: ft.Page):
                         break
 
                     cv2.imshow(ventana_nombre, frame)
-
                     if cv2.waitKey(1) & 0xFF == 27:
                         break
                     if cv2.getWindowProperty(ventana_nombre, cv2.WND_PROP_VISIBLE) < 1:
                         break
             except Exception as ex:
-                print(f"Error en cámara: {ex}")
+                error_camara = f"Error en el escáner: {ex}"
             finally:
                 try:
                     if cap is not None:
@@ -629,18 +649,24 @@ def main(page: ft.Page):
 
             if codigo_encontrado:
                 procesar_texto_escaneado(codigo_encontrado)
+            elif error_camara:
+                senal(False)
+                mostrar_alerta(error_camara, es_error=True, ms=3000)
 
-        # ---- Cámara del móvil (visor horizontal por defecto + zxingcpp) ----
-        cam_estado = {"cam": None, "activa": False, "procesando": False}
-        panel_camara = ft.Container(
+        # ---- Cámara del móvil a PANTALLA COMPLETA (overlay) ----
+        cam_estado = {"cam": None, "activa": False, "procesando": False, "token": 0}
+        visor_camara_stack = ft.Stack(expand=True)
+        overlay_camara = ft.Container(
             visible=False,
-            aspect_ratio=16 / 9,
-            width=float("inf"),
+            expand=True,
             bgcolor="black",
-            border_radius=12,
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            alignment=ft.Alignment(0, 0),
+            left=0,
+            top=0,
+            right=0,
+            bottom=0,
+            content=visor_camara_stack,
         )
+        page.overlay.append(overlay_camara)
 
         _detector_qr = cv2.QRCodeDetector() if cv2 is not None else None
 
@@ -656,37 +682,45 @@ def main(page: ft.Page):
                     return None
                 if frame is None:
                     return None
-                # Orientar el frame a horizontal por defecto si el sensor lo entrega vertical
-                if frame.shape[0] > frame.shape[1]:
-                    frame = np.rot90(frame, -1)
 
-                # 1. Codigo de barras (zxing-cpp si existe; si no, decodificador propio de Code 128).
-                #    Se descarta el detector EAN/UPC de OpenCV: no lee Code 128 y entregaba numeros falsos.
-                texto = _decodificar_frame(np.ascontiguousarray(frame))
-                if texto:
-                    return texto
+                # Evalúa tanto orientación horizontal como vertical sin rotación
+                for rotacion in (0, -1):
+                    img_eval = frame if rotacion == 0 else np.rot90(frame, rotacion)
+                    img_contig = np.ascontiguousarray(img_eval)
 
-                # 2. Codigo QR (solo si OpenCV esta disponible, es decir, en PC)
-                if _detector_qr is not None:
-                    texto_qr, _, _ = _detector_qr.detectAndDecode(frame)
-                    if texto_qr and texto_qr.strip():
-                        return texto_qr.strip()
+                    texto = _decodificar_frame(img_contig)
+                    if texto:
+                        return texto
+
+                    if _detector_qr is not None:
+                        texto_qr, _, _ = _detector_qr.detectAndDecode(img_contig)
+                        if texto_qr and texto_qr.strip():
+                            return texto_qr.strip()
             except Exception as ex:
                 print(f"Error leyendo frame: {ex}")
             return None
 
-        async def cerrar_camara_movil():
+        async def cerrar_camara_movil(mensaje_error=None):
             cam_estado["activa"] = False
+            cam_estado["token"] += 1
+            cam = cam_estado["cam"]
             cam_estado["cam"] = None
-            cam = panel_camara.content
             if cam is not None:
                 try:
                     await cam.stop_image_stream()
                 except Exception:
                     pass
-            panel_camara.content = None
-            panel_camara.visible = False
+            visor_camara_stack.controls.clear()
+            overlay_camara.visible = False
             _estado_boton(False)
+            if mensaje_error:
+                senal(False)
+                mostrar_alerta(mensaje_error, es_error=True, ms=3000)
+
+        async def _temporizador_escaneo(token_actual, segundos=TIEMPO_MAX_ESCANEO):
+            await asyncio.sleep(segundos)
+            if cam_estado["activa"] and cam_estado["token"] == token_actual:
+                await cerrar_camara_movil("No se detectó ningún código de barras o QR.")
 
         async def _al_recibir_cuadro(e):
             if not cam_estado["activa"] or cam_estado["procesando"]:
@@ -696,13 +730,14 @@ def main(page: ft.Page):
                 texto = await asyncio.to_thread(_leer_codigo, e.bytes)
             finally:
                 cam_estado["procesando"] = False
+
             if texto and cam_estado["activa"]:
-                cam_estado["activa"] = False
                 await cerrar_camara_movil()
                 procesar_texto_escaneado(texto)
 
         async def abrir_camara_movil():
             if fc is None or permiso_camara is None:
+                senal(False)
                 mostrar_alerta("El escaneo con cámara no está disponible en este dispositivo. Ingresa el SG manualmente.",
                                es_error=True, ms=3000)
                 return
@@ -711,14 +746,68 @@ def main(page: ft.Page):
             except Exception:
                 permiso = None
             if permiso != fph.PermissionStatus.GRANTED:
-                mostrar_alerta("Sin permiso de cámara. Actívalo en los Ajustes del teléfono o ingresa el SG manualmente.",
-                               es_error=True, ms=4000)
+                senal(False)
+                mostrar_alerta("Sin permiso de cámara. Actívalo en Ajustes o ingresa el SG manualmente.",
+                               es_error=True, ms=3500)
                 return
 
-            cam = fc.Camera(expand=True, preview_enabled=True, on_stream_image=_al_recibir_cuadro)
-            panel_camara.content = cam
-            panel_camara.visible = True
+            cam = fc.Camera(
+                expand=True,
+                preview_enabled=True,
+                on_stream_image=_al_recibir_cuadro,
+            )
+
+            guia_enfoque = ft.Container(
+                expand=True,
+                alignment=ft.Alignment(0, 0),
+                content=ft.Column(
+                    [
+                        ft.Container(
+                            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                            border_radius=8,
+                            bgcolor=ft.Colors.with_opacity(0.65, "black"),
+                            content=ft.Text(
+                                "Enfoca el código de barras o QR",
+                                color="white",
+                                size=15,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                        ),
+                        ft.Container(
+                            width=280,
+                            height=180,
+                            border=ft.border.all(3, "#00e676"),
+                            border_radius=12,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=12,
+                ),
+            )
+
+            btn_cerrar_fullscreen = ft.Container(
+                bottom=32,
+                left=24,
+                right=24,
+                content=ft.Button(
+                    content="✖ CANCELAR ESCANEO",
+                    bgcolor="#c62828",
+                    color="white",
+                    height=50,
+                    width=float("inf"),
+                    on_click=lambda e: page.run_task(cerrar_camara_movil),
+                ),
+            )
+
+            visor_camara_stack.controls = [
+                ft.Container(content=cam, expand=True),
+                guia_enfoque,
+                btn_cerrar_fullscreen,
+            ]
+            overlay_camara.visible = True
             _estado_boton(True)
+
             try:
                 camaras = await cam.get_available_cameras()
                 if not camaras:
@@ -732,17 +821,19 @@ def main(page: ft.Page):
                 )
                 if not await cam.supports_image_streaming():
                     raise RuntimeError("Este equipo no permite leer fotogramas de la cámara")
+
+                cam_estado["token"] += 1
                 cam_estado["cam"] = cam
                 cam_estado["activa"] = True
                 await cam.start_image_stream()
+                page.run_task(_temporizador_escaneo, cam_estado["token"], TIEMPO_MAX_ESCANEO)
             except Exception as ex:
                 print(f"Error al abrir la cámara: {ex}")
-                await cerrar_camara_movil()
-                mostrar_alerta("No se pudo abrir la cámara. Ingresa el SG manualmente.", es_error=True, ms=3000)
+                await cerrar_camara_movil("No se pudo iniciar la cámara. Ingresa el SG manualmente.")
 
         async def iniciar_escaneo(e):
             if es_movil:
-                if panel_camara.visible:
+                if overlay_camara.visible:
                     await cerrar_camara_movil()
                 else:
                     await abrir_camara_movil()
@@ -1254,7 +1345,7 @@ def main(page: ft.Page):
             if not sesion_activa():
                 return
             fecha_val = txt_fecha.value.strip()
-            if re.search(r"[|;\t]", txt_sg.value or ""):
+            if re.search(r"[|;	]", txt_sg.value or ""):
                 procesar_texto_escaneado(txt_sg.value)
             sg_val = txt_sg.value.strip()
             skus, arts = obtener_valores_numericos()
@@ -1381,7 +1472,6 @@ def main(page: ft.Page):
                 ft.Text("Registrar Nuevo Pedido", size=18, weight=ft.FontWeight.BOLD),
                 txt_fecha,
                 btn_escanear,
-                panel_camara,
                 txt_sg,
                 ft.Text("Modalidad de Preparación:", size=14, weight=ft.FontWeight.W_500),
                 rg_tipo,
