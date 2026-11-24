@@ -1,0 +1,20 @@
+[project]
+name = "control-picking"
+version = "1.0.0"
+description = "Control de Picking"
+requires-python = ">=3.12"
+dependencies = [
+    "flet==1.1.2",
+    "flet-camera==1.1.2",
+    "flet-permission-handler==1.1.2",
+    "pillow",
+    "requests",
+]
+
+[tool.flet]
+product = "Control de Picking"
+org = "cl.controlpicking"
+
+[tool.flet.android.permission]
+"android.permission.CAMERA" = true
+"android.permission.INTERNET" = true
